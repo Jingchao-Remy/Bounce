@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-LLM Switch — Web Management Panel (Phase 2)
+Bounce — Web Management Panel (Phase 2)
 Flask-based web UI for managing model providers.
 
 Usage:
-  llm-switch-panel            # Start the web panel (default port 3000)
-  llm-switch-panel --port 8080
-  llm-switch-panel --daemon   # Start in background
+  bounce-panel            # Start the web panel (default port 3000)
+  bounce-panel --port 8080
+  bounce-panel --daemon   # Start in background
 """
 
 import os
@@ -18,7 +18,7 @@ import webbrowser
 from pathlib import Path
 
 # ── Config ──────────────────────────────────────────────────────────────
-CONFIG_DIR = os.path.expanduser("~/.llm-switch")
+CONFIG_DIR = os.path.expanduser("~/.bounce")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 # WSL <-> Windows integration
 def _get_win_user():
@@ -32,13 +32,13 @@ def _get_win_user():
                     return full
     return os.path.expanduser("~")
 WIN_USER_HOME = _get_win_user()
-WINDOWS_ENV_DIR = os.path.join(WIN_USER_HOME, ".llm-switch")
+WINDOWS_ENV_DIR = os.path.join(WIN_USER_HOME, ".bounce")
 
 # Check HOME redirect (Hermes quirk)
 real_home = os.environ.get("HOME", os.path.expanduser("~"))
-alt_config = os.path.join(real_home, ".llm-switch", "config.json")
+alt_config = os.path.join(real_home, ".bounce", "config.json")
 if not os.path.exists(CONFIG_PATH) and os.path.exists(alt_config):
-    CONFIG_DIR = os.path.join(real_home, ".llm-switch")
+    CONFIG_DIR = os.path.join(real_home, ".bounce")
     CONFIG_PATH = alt_config
 
 # ── Data Layer ──────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ def write_env_files(config, provider_id):
     # WSL shell env
     shell_path = os.path.join(CONFIG_DIR, "current.sh")
     with open(shell_path, "w") as f:
-        f.write(f"# LLM Switch — Current provider: {provider_id}\n")
+        f.write(f"# Bounce — Current provider: {provider_id}\n")
         for k, v in env.items():
             f.write(f"export {k}={json.dumps(v)}\n")
     os.chmod(shell_path, 0o755)
@@ -89,7 +89,7 @@ def write_env_files(config, provider_id):
     os.makedirs(WINDOWS_ENV_DIR, exist_ok=True)
     batch_path = os.path.join(WINDOWS_ENV_DIR, "current.bat")
     with open(batch_path, "w") as f:
-        f.write(f"@echo off\nREM LLM Switch — Current provider: {provider_id}\n\n")
+        f.write(f"@echo off\nREM Bounce — Current provider: {provider_id}\n\n")
         for k, v in env.items():
             f.write(f"set {k}={v}\n")
 
@@ -219,7 +219,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LLM Switch Panel</title>
+<title>Bounce Panel</title>
 <style>
 :root {
   --bg: #f5f5f7;
@@ -294,7 +294,7 @@ h1 { font-size: 24px; font-weight: 600; margin-bottom: 4px; }
 </style>
 </head>
 <body>
-<h1>⚡ LLM Switch</h1>
+<h1>⚡ Bounce</h1>
 <p class="subtitle">统一模型路由面板 · <span id="status-time">—</span></p>
 
 <div class="toolbar">
@@ -440,10 +440,10 @@ def main():
         p = multiprocessing.Process(target=lambda: app.run(host="0.0.0.0", port=port, debug=False))
         p.daemon = True
         p.start()
-        print(f"✅ LLM Switch Panel 已后台启动: http://localhost:{port}")
+        print(f"✅ Bounce Panel 已后台启动: http://localhost:{port}")
         print(f"   停止: kill {p.pid}")
     else:
-        print(f"⚡ LLM Switch Panel: http://localhost:{port}")
+        print(f"⚡ Bounce Panel: http://localhost:{port}")
         print(f"   按 Ctrl+C 停止")
         app.run(host="0.0.0.0", port=port, debug=False)
 

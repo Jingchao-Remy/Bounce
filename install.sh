@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# LLM Switch Gateway — Install Script
-# Copies scripts to ~/.local/bin/ and config to ~/.llm-switch/
+# Bounce Gateway — Install Script
+# Copies scripts to ~/.local/bin/ and config to ~/.bounce/
 
 set -e
 
 INSTALL_DIR="${HOME}/.local/bin"
-CONFIG_DIR="${HOME}/.llm-switch"
+CONFIG_DIR="${HOME}/.bounce"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/scripts" && pwd)"
 CONFIG_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/config" && pwd)"
 
-echo "📦 LLM Switch Gateway — Installing"
+echo "📦 Bounce Gateway — Installing"
 
 # 1. Create directories
 mkdir -p "${INSTALL_DIR}"
@@ -17,10 +17,10 @@ mkdir -p "${CONFIG_DIR}"
 
 # 2. Copy scripts
 echo "   Copying scripts → ${INSTALL_DIR}"
-cp "${SCRIPT_DIR}/llm-switch-gateway" "${INSTALL_DIR}/"
-cp "${SCRIPT_DIR}/llm-switch" "${INSTALL_DIR}/"
-cp "${SCRIPT_DIR}/llm-switch-panel" "${INSTALL_DIR}/"
-chmod +x "${INSTALL_DIR}/llm-switch"*
+cp "${SCRIPT_DIR}/bounce-gateway" "${INSTALL_DIR}/"
+cp "${SCRIPT_DIR}/bounce" "${INSTALL_DIR}/"
+cp "${SCRIPT_DIR}/bounce-panel" "${INSTALL_DIR}/"
+chmod +x "${INSTALL_DIR}/bounce"*
 echo "   ✅ Scripts installed"
 
 # 3. Copy config templates (don't overwrite existing config)
@@ -55,15 +55,15 @@ python3 -c "import flask, requests" 2>/dev/null && \
     echo "   ⚠️  Run: pip install flask requests"
 
 echo ""
-echo "🎉 LLM Switch Gateway installed!"
+echo "🎉 Bounce Gateway installed!"
 echo ""
 echo "   Start the Gateway:"
-echo "     llm-switch-gateway"
+echo "     bounce-gateway"
 echo ""
 echo "   Or via CLI:"
-echo "     llm-switch gateway start"
+echo "     bounce gateway start"
 echo ""
 echo "   First run? It'll ask if you want a free local model."
 echo "   Or add cloud providers:"
-echo "     llm-switch provider add deepseek-cp --key sk-xxx"
+echo "     bounce provider add deepseek-cp --key sk-xxx"
 echo ""

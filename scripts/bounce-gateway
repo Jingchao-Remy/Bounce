@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""LLM Switch Gateway — OpenAI-compatible failover proxy.
+"""Bounce Gateway — OpenAI-compatible failover proxy.
 
 Routes each request through providers in tier priority order.
 Built-in local model (Qwen2.5-0.5B via llama-cpp-python) and
 static demo fallback work without any API key.
 
 Usage:
-  llm-switch-gateway                    # Start on default port 3001
-  llm-switch-gateway --no-demo          # Disable all built-in fallbacks
-  llm-switch-gateway --port 3002        # Custom port
-  llm-switch-gateway --daemon           # Background process
+  bounce-gateway                    # Start on default port 3001
+  bounce-gateway --no-demo          # Disable all built-in fallbacks
+  bounce-gateway --port 3002        # Custom port
+  bounce-gateway --daemon           # Background process
 """
 
 import os
@@ -23,7 +23,7 @@ import requests
 from flask import Flask, request, Response, jsonify
 
 # ── Config ───────────────────────────────────────────────────────────
-CONFIG_DIR = os.path.expanduser("~/.llm-switch")
+CONFIG_DIR = os.path.expanduser("~/.bounce")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 TEMPLATES_PATH = os.path.join(CONFIG_DIR, "templates.json")
 MODELS_DIR = os.path.join(CONFIG_DIR, "models")
@@ -180,7 +180,7 @@ def load_local_llm():
         log.info(f"Local model loaded ({os.path.getsize(model_path)//1024//1024}MB)")
         return _local_llm
     except ImportError:
-        log.warning("llama-cpp-python not installed. Run: llm-switch install-local")
+        log.warning("llama-cpp-python not installed. Run: bounce install-local")
         return None
     except Exception as e:
         log.warning(f"Failed to load local model: {e}")
@@ -223,7 +223,7 @@ def local_llm_chat(openai_request):
 # 4. BUILT-IN STATIC DEMO (last-resort: no API keys, no local model)
 # ═════════════════════════════════════════════════════════════════════
 
-DEMO_TEMPLATE = """Hello from **LLM Switch Gateway** 🚀
+DEMO_TEMPLATE = """Hello from **Bounce Gateway** 🚀
 
 You said: _{msg}_
 
@@ -234,14 +234,14 @@ This is a **built-in demo** — works when no AI providers or local models are c
 
 **Option 1: Install a tiny local model (recommended)**
 ```bash
-llm-switch install-local
+bounce install-local
 ```
 Downloads Qwen2.5-0.5B (~350MB) — runs on CPU, no API key needed.
 
 **Option 2: Add a cloud provider**
 ```bash
-llm-switch provider add deepseek-cp --key sk-your-key
-llm-switch provider add siliconflow-free --key sk-your-key
+bounce provider add deepseek-cp --key sk-your-key
+bounce provider add siliconflow-free --key sk-your-key
 ```
 
 ### 📊 Default Provider Chain (UPS-style failover)
@@ -497,7 +497,7 @@ def handle_models():
         models.append({
             "id": "demo-model", "object": "model",
             "created": int(time.time()),
-            "owned_by": "LLM Switch Gateway (built-in demo)",
+            "owned_by": "Bounce Gateway (built-in demo)",
         })
 
     return jsonify({"object": "list", "data": models})
@@ -505,7 +505,7 @@ def handle_models():
 
 @app.route("/health", methods=["GET"])
 def handle_health():
-    return jsonify({"status": "ok", "service": "llm-switch-gateway"})
+    return jsonify({"status": "ok", "service": "bounce-gateway"})
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -526,14 +526,14 @@ def prompt_install_local(is_daemon=False):
             pass  # Library missing, still prompt
 
     print(f"\n{'='*55}")
-    print(f"  🔧 No AI providers configured for LLM Switch Gateway")
+    print(f"  🔧 No AI providers configured for Bounce Gateway")
     print(f"{'='*55}")
     print(f"\n  Would you like to install a tiny local AI model now?")
     print(f"\n  📦 Qwen2.5-0.5B (~350MB) — runs on CPU, no API key needed.")
     print(f"  ⚡ Works offline, always available as fallback.")
     print(f"\n  Or set up cloud providers later with:")
-    print(f"    llm-switch provider add deepseek-cp --key sk-xxx")
-    print(f"    llm-switch provider add siliconflow-free --key sk-xxx\n")
+    print(f"    bounce provider add deepseek-cp --key sk-xxx")
+    print(f"    bounce provider add siliconflow-free --key sk-xxx\n")
 
     try:
         ans = input("  Download & install local model? [Y/n]: ").strip().lower()
@@ -541,7 +541,7 @@ def prompt_install_local(is_daemon=False):
         ans = "n"
 
     if ans not in ("", "y", "yes"):
-        print("  ⏭️  Skipped. Install later: llm-switch install-local")
+        print("  ⏭️  Skipped. Install later: bounce install-local")
         print(f"\n{'='*55}")
         return
 
@@ -751,7 +751,7 @@ def _run_install_local():
     print(f"  🎉 Local model installed and configured!")
     print(f"{'='*55}")
     print(f"\n  Restart the Gateway:")
-    print(f"    llm-switch gateway restart")
+    print(f"    bounce gateway restart")
     print(f"\n  Or just wait — next request will use the real model.\n")
     return True
 
@@ -785,7 +785,7 @@ def _register_provider(config, provider_dict):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="LLM Switch Gateway")
+    parser = argparse.ArgumentParser(description="Bounce Gateway")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--daemon", action="store_true")
     parser.add_argument("--debug", action="store_true")
@@ -801,7 +801,7 @@ def main():
     if args.daemon:
         pid = os.fork()
         if pid > 0:
-            print(f"✅ LLM Switch Gateway started (PID {pid}) on :{args.port}")
+            print(f"✅ Bounce Gateway started (PID {pid}) on :{args.port}")
             sys.exit(0)
 
     _, providers, gw = load_gateway_config()
@@ -816,7 +816,7 @@ def main():
         gateway_providers = [p for p in providers if p.get("gateway")]
 
     print(f"\n{'='*55}")
-    print(f"  LLM Switch Gateway — http://localhost:{args.port}")
+    print(f"  Bounce Gateway — http://localhost:{args.port}")
     print(f"{'='*55}")
 
     if gateway_providers:
@@ -832,8 +832,8 @@ def main():
                 print(f"    [{tier:15s}] {name:25s} → (in-process)")
     else:
         print(f"\n  ⚠️  No providers configured.")
-        print(f"     Install local model: llm-switch install-local")
-        print(f"     Add cloud provider:  llm-switch provider add <template> --key <key>")
+        print(f"     Install local model: bounce install-local")
+        print(f"     Add cloud provider:  bounce provider add <template> --key <key>")
 
     # Show built-in fallbacks
     has_local = is_local_model_available()
@@ -844,7 +844,7 @@ def main():
         label = "Static Demo (ultimate fallback)" if has_local else "Static Demo (fallback)"
         print(f"    [{tier_name:15s}] {label:32s} → always available")
     if not no_demo and not has_local:
-        print(f"                           (install a real model: llm-switch install-local)")
+        print(f"                           (install a real model: bounce install-local)")
 
     print(f"\n  📡 POST /v1/chat/completions   ← OpenAI 格式")
     print(f"  📡 GET  /v1/models              ← 聚合模型列表")

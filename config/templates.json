@@ -1,6 +1,6 @@
 {
   "_version": "1.0.0",
-  "_description": "LLM Switch Gateway — Provider 模板库。用户通过模板添加 PROVIDER，自动填入 api_base、错误码模式等。",
+  "_description": "Bounce Gateway — Provider 模板库。用户通过模板添加 PROVIDER，自动填入 api_base、错误码模式等。",
   "tiers": [
     { "id": "coding_plan",  "name": "包月 Coding Plan", "order": 1, "icon": "⭐" },
     { "id": "payg",         "name": "按量付费",         "order": 2, "icon": "💰" },

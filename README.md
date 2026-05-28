@@ -1,4 +1,4 @@
-# LLM Switch Gateway
+# Bounce Gateway
 
 > **Like a UPS for your AI tools — one endpoint, never down.**
 
@@ -7,12 +7,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-**LLM Switch Gateway** is a lightweight failover proxy that gives you **one OpenAI-compatible endpoint** for all your AI tools. Configure it once — it auto-fails over when providers run out of quota, hit rate limits, or go down.
+**Bounce Gateway** is a lightweight failover proxy that gives you **one OpenAI-compatible endpoint** for all your AI tools. Configure it once — it auto-fails over when providers run out of quota, hit rate limits, or go down.
 
 ```mermaid
 flowchart LR
     Tool[Your AI Tool<br/>Continue / Cline / Aider / etc.]
-    GW[LLM Switch Gateway<br/>localhost:3001]
+    GW[Bounce Gateway<br/>localhost:3001]
     T1[Coding Plan 🥇]
     T2[Pay-as-you-go 🥈]
     T3[Free Quota 🥉]
@@ -46,17 +46,17 @@ flowchart LR
 pip install flask requests
 
 # 2. Start the Gateway
-llm-switch-gateway
+bounce-gateway
 ```
 
 ```text
 =======================================================
-  LLM Switch Gateway — http://localhost:3001
+  Bounce Gateway — http://localhost:3001
 =======================================================
 
   ⚠️  No providers configured.
-     Install local model: llm-switch install-local
-     Add cloud provider:  llm-switch provider add <template> --key <key>
+     Install local model: bounce install-local
+     Add cloud provider:  bounce provider add <template> --key <key>
 
     [local_demo     ] Static Demo (fallback) → always available
 
@@ -92,9 +92,9 @@ The easiest way to get started with cloud AI — no credit card required.
 ```bash
 # 1. Sign up at: https://openrouter.ai/auth?ref=llmswitch
 # 2. Create an API key at: https://openrouter.ai/keys
-# 3. Add it to LLM Switch:
-llm-switch provider add openrouter-payg --key sk-or-v1-your-key-here
-llm-switch provider add openrouter-free --key sk-or-v1-your-key-here
+# 3. Add it to Bounce:
+bounce provider add openrouter-payg --key sk-or-v1-your-key-here
+bounce provider add openrouter-free --key sk-or-v1-your-key-here
 ```
 
 > 💡 **One key for all 400+ models.** OpenRouter handles the routing. You get a single bill at the end of the month.
@@ -107,8 +107,8 @@ llm-switch provider add openrouter-free --key sk-or-v1-your-key-here
 - **Fast inference** on local mainland servers (no VPN needed)
 
 ```bash
-llm-switch provider add siliconflow-payg --key sk-your-key-here
-llm-switch provider add siliconflow-free --key sk-your-key-here
+bounce provider add siliconflow-payg --key sk-your-key-here
+bounce provider add siliconflow-free --key sk-your-key-here
 ```
 
 ---
@@ -119,14 +119,14 @@ For genuine AI responses without any API key:
 
 ```bash
 # Interactive installer — prompts before downloading
-llm-switch install-local
+bounce install-local
 ```
 
 Or if you prefer:
 
 ```bash
 # Direct install
-llm-switch install-local --yes
+bounce install-local --yes
 ```
 
 What happens:
@@ -146,7 +146,7 @@ The model runs entirely on CPU, takes ~2-3 seconds per response on modern hardwa
 
 ```bash
 # See available templates
-llm-switch provider templates
+bounce provider templates
 ```
 
 ```text
@@ -177,27 +177,27 @@ Add providers:
 
 ```bash
 # Add a coding plan (Tier 1 — tried first)
-llm-switch provider add deepseek-cp --key sk-you...-key
+bounce provider add deepseek-cp --key sk-you...-key
 
 # Add a pay-as-you-go backup (Tier 2)
-llm-switch provider add deepseek-payg --key sk-you...-key
+bounce provider add deepseek-payg --key sk-you...-key
 
 # Add OpenRouter (Tier 2) — one key for 400+ models
-llm-switch provider add openrouter-payg --key sk-or-v1...key
+bounce provider add openrouter-payg --key sk-or-v1...key
 
 # Add a free tier (Tier 3)
-llm-switch provider add openrouter-free --key sk-or-v1...key
+bounce provider add openrouter-free --key sk-or-v1...key
 
 # Add a local model (Tier 4) — connects to llama.cpp/Ollama
-llm-switch provider add qwen27b-direct
+bounce provider add qwen27b-direct
 ```
 
 After adding providers, restart the Gateway:
 
 ```bash
-llm-switch gateway restart
+bounce gateway restart
 # or
-llm-switch gateway start
+bounce gateway start
 ```
 
 ---
@@ -224,7 +224,7 @@ All tools that support OpenAI-compatible API connect to **one endpoint**:
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│              LLM Switch Gateway                          │
+│              Bounce Gateway                          │
 │  localhost:3001/v1                                       │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
@@ -282,22 +282,22 @@ Templates define API endpoints, supported models, timeout, and error patterns fo
 
 ```text
 Usage:
-  llm-switch list                    List all providers
-  llm-switch use <id>                Switch active provider
-  llm-switch status                  Show current provider
-  llm-switch env                     Show env vars
-  llm-switch doctor                  Check all tool configs
-  llm-switch panel                   Web management panel
-  llm-switch install-local           Install tiny local AI model (CPU)
-  llm-switch gateway <start|stop|status>   Failover gateway
-  llm-switch provider <add|list|templates>  Provider management
+  bounce list                    List all providers
+  bounce use <id>                Switch active provider
+  bounce status                  Show current provider
+  bounce env                     Show env vars
+  bounce doctor                  Check all tool configs
+  bounce panel                   Web management panel
+  bounce install-local           Install tiny local AI model (CPU)
+  bounce gateway <start|stop|status>   Failover gateway
+  bounce provider <add|list|templates>  Provider management
 ```
 
 ---
 
 ## 🔧 Configuration
 
-Default config at `~/.llm-switch/config.json`:
+Default config at `~/.bounce/config.json`:
 
 ```json
 {
@@ -341,7 +341,7 @@ API keys are resolved in this order:
 
 ## 🔄 How It Differs
 
-| Feature | One API / LiteLLM | **LLM Switch Gateway** |
+| Feature | One API / LiteLLM | **Bounce Gateway** |
 |---------|-------------------|----------------------|
 | Philosophy | "Pick a channel" | "Don't let me down" |
 | Failover | Manual channel switching | **Automatic chain failover** |

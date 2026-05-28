@@ -1,4 +1,4 @@
-# LLM Switch Gateway
+# Bounce Gateway
 
 > **Comme un UPS pour vos outils IA — un seul endpoint, jamais en panne.**
 
@@ -7,12 +7,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-**LLM Switch Gateway** est un proxy de basculement léger qui offre **un endpoint unique compatible OpenAI** pour tous vos outils d'IA. Configurez-le une fois — il bascule automatiquement lorsque les fournisseurs atteignent leur quota, sont limités en débit ou tombent en panne.
+**Bounce Gateway** est un proxy de basculement léger qui offre **un endpoint unique compatible OpenAI** pour tous vos outils d'IA. Configurez-le une fois — il bascule automatiquement lorsque les fournisseurs atteignent leur quota, sont limités en débit ou tombent en panne.
 
 ```mermaid
 flowchart LR
     Tool[Votre outil IA<br/>Continue / Cline / Aider / etc.]
-    GW[LLM Switch Gateway<br/>localhost:3001]
+    GW[Bounce Gateway<br/>localhost:3001]
     T1[Abonnement 🥇]
     T2[Pay-as-you-go 🥈]
     T3[Quota gratuit 🥉]
@@ -46,17 +46,17 @@ flowchart LR
 pip install flask requests
 
 # 2. Lancez la passerelle
-llm-switch-gateway
+bounce-gateway
 ```
 
 ```text
 =======================================================
-  LLM Switch Gateway — http://localhost:3001
+  Bounce Gateway — http://localhost:3001
 =======================================================
 
   ⚠️  Aucun fournisseur configuré.
-     Installer un modèle local : llm-switch install-local
-     Ajouter un fournisseur :   llm-switch provider add <template> --key <clé>
+     Installer un modèle local : bounce install-local
+     Ajouter un fournisseur :   bounce provider add <template> --key <clé>
 
     [local_demo     ] Démo statique (secours) → toujours disponible
 
@@ -92,9 +92,9 @@ Le moyen le plus simple de démarrer avec l'IA dans le cloud — sans carte banc
 ```bash
 # 1. Inscrivez-vous : https://openrouter.ai/auth?ref=llmswitch
 # 2. Créez une clé API : https://openrouter.ai/keys
-# 3. Ajoutez-la à LLM Switch :
-llm-switch provider add openrouter-payg --key sk-or-v1-votre-clé-ici
-llm-switch provider add openrouter-free --key sk-or-v1-votre-clé-ici
+# 3. Ajoutez-la à Bounce :
+bounce provider add openrouter-payg --key sk-or-v1-votre-clé-ici
+bounce provider add openrouter-free --key sk-or-v1-votre-clé-ici
 ```
 
 > 💡 **Une seule clé pour 400+ modèles.** OpenRouter gère le routage. Vous recevez une facture unique à la fin du mois.
@@ -106,7 +106,7 @@ llm-switch provider add openrouter-free --key sk-or-v1-votre-clé-ici
 - **Paiement à l'utilisation** — deepseek-chat à partir de 0,28 $/M tokens
 
 ```bash
-llm-switch provider add deepseek-payg --key sk-votre-clé-ici
+bounce provider add deepseek-payg --key sk-votre-clé-ici
 ```
 
 ---
@@ -117,13 +117,13 @@ Pour des réponses IA authentiques sans aucune clé API :
 
 ```bash
 # Installation interactive — demande confirmation avant téléchargement
-llm-switch install-local
+bounce install-local
 ```
 
 Ou en mode direct :
 
 ```bash
-llm-switch install-local --yes
+bounce install-local --yes
 ```
 
 Ce qui se passe :
@@ -143,7 +143,7 @@ Le modèle fonctionne entièrement sur CPU, prend ~2-3 secondes par réponse sur
 
 ```bash
 # Voir les modèles disponibles
-llm-switch provider templates
+bounce provider templates
 ```
 
 ```text
@@ -174,24 +174,24 @@ Ajouter des fournisseurs :
 
 ```bash
 # Ajouter un abonnement (Niveau 1 — essayé en premier)
-llm-switch provider add deepseek-cp --key sk-votre-clé
+bounce provider add deepseek-cp --key sk-votre-clé
 
 # Ajouter OpenRouter (Niveau 2) — une clé pour 400+ modèles
-llm-switch provider add openrouter-payg --key sk-or-v1...clé
+bounce provider add openrouter-payg --key sk-or-v1...clé
 
 # Ajouter un niveau gratuit (Niveau 3)
-llm-switch provider add openrouter-free --key sk-or-v1...clé
+bounce provider add openrouter-free --key sk-or-v1...clé
 
 # Ajouter un modèle local (Niveau 4)
-llm-switch provider add qwen27b-direct
+bounce provider add qwen27b-direct
 ```
 
 Après avoir ajouté des fournisseurs, redémarrez la passerelle :
 
 ```bash
-llm-switch gateway restart
+bounce gateway restart
 # ou
-llm-switch gateway start
+bounce gateway start
 ```
 
 ---
@@ -218,7 +218,7 @@ Tous les outils compatibles avec l'API OpenAI se connectent à **un seul endpoin
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│              LLM Switch Gateway                          │
+│              Bounce Gateway                          │
 │  localhost:3001/v1                                       │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
@@ -254,22 +254,22 @@ Décisions clés :
 
 ```text
 Utilisation :
-  llm-switch list                    Lister les fournisseurs
-  llm-switch use <id>                Changer de fournisseur actif
-  llm-switch status                  Afficher l'état actuel
-  llm-switch env                     Afficher les variables d'env.
-  llm-switch doctor                  Vérifier les configs des outils
-  llm-switch panel                   Panneau d'administration Web
-  llm-switch install-local           Installer petit modèle IA local
-  llm-switch gateway <start|stop|status>   Passerelle de basculement
-  llm-switch provider <add|list|templates>  Gestion des fournisseurs
+  bounce list                    Lister les fournisseurs
+  bounce use <id>                Changer de fournisseur actif
+  bounce status                  Afficher l'état actuel
+  bounce env                     Afficher les variables d'env.
+  bounce doctor                  Vérifier les configs des outils
+  bounce panel                   Panneau d'administration Web
+  bounce install-local           Installer petit modèle IA local
+  bounce gateway <start|stop|status>   Passerelle de basculement
+  bounce provider <add|list|templates>  Gestion des fournisseurs
 ```
 
 ---
 
 ## 🔧 Configuration
 
-Fichier de configuration par défaut `~/.llm-switch/config.json` :
+Fichier de configuration par défaut `~/.bounce/config.json` :
 
 ```json
 {
@@ -313,7 +313,7 @@ Ordre de résolution des clés API :
 
 ## 🔄 Comparaison
 
-| Fonctionnalité | One API / LiteLLM | **LLM Switch Gateway** |
+| Fonctionnalité | One API / LiteLLM | **Bounce Gateway** |
 |----------------|-------------------|----------------------|
 | Philosophie | "Choisissez un canal" | "Ne tombe jamais en panne" |
 | Basculement | Changement manuel | **Basculement automatique** |

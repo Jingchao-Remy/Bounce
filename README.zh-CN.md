@@ -1,4 +1,4 @@
-# LLM Switch Gateway
+# Bounce Gateway
 
 > **像 AI 工具的 UPS 不间断电源 — 一个端点，永不宕机。**
 
@@ -7,12 +7,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-**LLM Switch Gateway** 是一个轻量级故障转移代理，为你的所有 AI 工具提供一个 **统一的 OpenAI 兼容端点**。只需配置一次——当某个提供商配额耗尽、遇到速率限制或服务宕机时，它会自动切换。
+**Bounce Gateway** 是一个轻量级故障转移代理，为你的所有 AI 工具提供一个 **统一的 OpenAI 兼容端点**。只需配置一次——当某个提供商配额耗尽、遇到速率限制或服务宕机时，它会自动切换。
 
 ```mermaid
 flowchart LR
     Tool[你的 AI 工具<br/>Continue / Cline / Aider / 等]
-    GW[LLM Switch Gateway<br/>localhost:3001]
+    GW[Bounce Gateway<br/>localhost:3001]
     T1[包月计划 🥇]
     T2[按量付费 🥈]
     T3[免费额度 🥉]
@@ -46,17 +46,17 @@ flowchart LR
 pip install flask requests
 
 # 2. 启动 Gateway
-llm-switch-gateway
+bounce-gateway
 ```
 
 ```text
 =======================================================
-  LLM Switch Gateway — http://localhost:3001
+  Bounce Gateway — http://localhost:3001
 =======================================================
 
   ⚠️  未配置任何提供商。
-     安装本地模型: llm-switch install-local
-     添加云提供商:  llm-switch provider add <模板名> --key <密钥>
+     安装本地模型: bounce install-local
+     添加云提供商:  bounce provider add <模板名> --key <密钥>
 
     [local_demo     ] 内置演示 (兜底) → 始终可用
 
@@ -94,9 +94,9 @@ curl http://localhost:3001/v1/chat/completions \
 ```bash
 # 1. 注册：https://cloud.siliconflow.cn?ref=llmswitch_xbs
 # 2. 在控制台创建 API Key：https://cloud.siliconflow.cn/account/ak
-# 3. 添加到 LLM Switch：
-llm-switch provider add siliconflow-payg --key sk-你的密钥
-llm-switch provider add siliconflow-free --key sk-你的密钥
+# 3. 添加到 Bounce：
+bounce provider add siliconflow-payg --key sk-你的密钥
+bounce provider add siliconflow-free --key sk-你的密钥
 ```
 
 > 💡 **免费模型适合日常开发辅助，按量付费模型在需要更强能力时自动顶上。** 如果免费额度不够，建议配置 DeepSeek 按量付费作为第二层保障。
@@ -109,8 +109,8 @@ llm-switch provider add siliconflow-free --key sk-你的密钥
 - 适合作为 Tier 1 主力提供商
 
 ```bash
-llm-switch provider add deepseek-cp --key sk-你的密钥
-llm-switch provider add deepseek-payg --key sk-你的密钥
+bounce provider add deepseek-cp --key sk-你的密钥
+bounce provider add deepseek-payg --key sk-你的密钥
 ```
 
 ---
@@ -121,13 +121,13 @@ llm-switch provider add deepseek-payg --key sk-你的密钥
 
 ```bash
 # 交互式安装 — 下载前会询问确认
-llm-switch install-local
+bounce install-local
 ```
 
 或者跳过确认：
 
 ```bash
-llm-switch install-local --yes
+bounce install-local --yes
 ```
 
 安装过程：
@@ -147,7 +147,7 @@ llm-switch install-local --yes
 
 ```bash
 # 查看可用模板
-llm-switch provider templates
+bounce provider templates
 ```
 
 ```text
@@ -178,24 +178,24 @@ llm-switch provider templates
 
 ```bash
 # 添加包月计划 (Tier 1 — 最优先尝试)
-llm-switch provider add deepseek-cp --key sk-你的密钥
+bounce provider add deepseek-cp --key sk-你的密钥
 
 # 添加硅基流动按量付费 (Tier 2)
-llm-switch provider add siliconflow-payg --key sk-你的密钥
+bounce provider add siliconflow-payg --key sk-你的密钥
 
 # 添加免费模型兜底 (Tier 3)
-llm-switch provider add siliconflow-free --key sk-你的密钥
+bounce provider add siliconflow-free --key sk-你的密钥
 
 # 添加本地模型 (Tier 4) — 连接 llama.cpp/Ollama
-llm-switch provider add qwen27b-direct
+bounce provider add qwen27b-direct
 ```
 
 添加完成后重启 Gateway：
 
 ```bash
-llm-switch gateway restart
+bounce gateway restart
 # 或
-llm-switch gateway start
+bounce gateway start
 ```
 
 ---
@@ -222,7 +222,7 @@ llm-switch gateway start
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│              LLM Switch Gateway                          │
+│              Bounce Gateway                          │
 │  localhost:3001/v1                                       │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
@@ -279,22 +279,22 @@ llm-switch gateway start
 
 ```text
 用法：
-  llm-switch list                    列出所有提供商
-  llm-switch use <id>                切换当前提供商
-  llm-switch status                  显示当前状态
-  llm-switch env                     显示环境变量
-  llm-switch doctor                  检查所有工具配置
-  llm-switch panel                   打开 Web 管理面板
-  llm-switch install-local           安装本地小模型 (CPU)
-  llm-switch gateway <start|stop|status>  故障转移网关
-  llm-switch provider <add|list|templates>  提供商管理
+  bounce list                    列出所有提供商
+  bounce use <id>                切换当前提供商
+  bounce status                  显示当前状态
+  bounce env                     显示环境变量
+  bounce doctor                  检查所有工具配置
+  bounce panel                   打开 Web 管理面板
+  bounce install-local           安装本地小模型 (CPU)
+  bounce gateway <start|stop|status>  故障转移网关
+  bounce provider <add|list|templates>  提供商管理
 ```
 
 ---
 
 ## 🔧 配置
 
-默认配置文件 `~/.llm-switch/config.json`：
+默认配置文件 `~/.bounce/config.json`：
 
 ```json
 {
@@ -338,7 +338,7 @@ API Key 的解析顺序：
 
 ## 🔄 与同类工具的对比
 
-| 特性 | One API / LiteLLM | **LLM Switch Gateway** |
+| 特性 | One API / LiteLLM | **Bounce Gateway** |
 |------|-------------------|----------------------|
 | 设计理念 | "选一个通道" | "绝不能宕机" |
 | 故障转移 | 手动切换通道 | **自动链式故障转移** |

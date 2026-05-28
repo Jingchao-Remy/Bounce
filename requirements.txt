@@ -2,4 +2,4 @@
 flask>=3.0
 requests>=2.31
 # Optional: for local model inference
-# llama-cpp-python (install via: llm-switch install-local)
+# llama-cpp-python (install via: bounce install-local)
