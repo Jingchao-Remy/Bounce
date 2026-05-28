@@ -2,6 +2,8 @@
 
 > **Like a UPS for your AI tools — one endpoint, never down.**
 
+[🇬🇧 English](README.md) | [🇨🇳 中文](README.zh-CN.md) | [🇫🇷 Français](README.fr.md)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
@@ -30,7 +32,7 @@ flowchart LR
 - **🔄 Auto failover** — 6 tiers, from cloud plans to local CPU. First 200 wins.
 - **🆓 Works immediately** — Built-in demo mode needs no API key. Clone, run, done.
 - **🧠 Real local model** — Install Qwen2.5-0.5B (~350MB) for genuine AI offline.
-- **📦 Provider templates** — Add DeepSeek, SiliconFlow, OpenAI, OpenRouter in one command.
+- **📦 Provider templates** — Add DeepSeek, OpenRouter, SiliconFlow, OpenAI in one command.
 - **🛡️ Error classification** — Detects 401/402/403/429 per provider — knows a quota error from a rate limit.
 - **🔀 Streaming support** — Full SSE streaming with `X-Provider-Id` headers.
 - **⚖️ Per-provider timeouts** — No single slow provider blocks the chain.
@@ -58,9 +60,9 @@ llm-switch-gateway
 
     [local_demo     ] Static Demo (fallback) → always available
 
-  📡 POST /v1/chat/completions   ← OpenAI 格式
-  📡 GET  /v1/models              ← 聚合模型列表
-  📡 GET  /health                  ← 健康检查
+  📡 POST /v1/chat/completions   ← OpenAI format
+  📡 GET  /v1/models              ← Aggregated model list
+  📡 GET  /health                  ← Health check
 ```
 
 **It's running.** No API key, no config — just works.
@@ -73,6 +75,41 @@ curl http://localhost:3001/v1/chat/completions \
 ```
 
 The demo response explains how to add real providers and install a local model.
+
+---
+
+## 🔑 Get Your First API Key (Free)
+
+The easiest way to get started with cloud AI — no credit card required.
+
+### ▶️ For International Users: OpenRouter
+
+[OpenRouter](https://openrouter.ai/auth?ref=llmswitch) gives you:
+- **$1 free credits** on signup — covers ~500K tokens of DeepSeek or Gemini
+- **400+ models** from 60+ providers under one API key
+- **Pay-as-you-go** with no monthly subscription
+
+```bash
+# 1. Sign up at: https://openrouter.ai/auth?ref=llmswitch
+# 2. Create an API key at: https://openrouter.ai/keys
+# 3. Add it to LLM Switch:
+llm-switch provider add openrouter-payg --key sk-or-v1-your-key-here
+llm-switch provider add openrouter-free --key sk-or-v1-your-key-here
+```
+
+> 💡 **One key for all 400+ models.** OpenRouter handles the routing. You get a single bill at the end of the month.
+
+### ▶️ For China Mainland Users: SiliconFlow
+
+[硅基流动 (SiliconFlow)](https://cloud.siliconflow.cn?ref=llmswitch_xbs) offers:
+- **14 RMB free quota** on first top-up of 34 RMB
+- **DeepSeek V3, Qwen 72B** and other top open-source models
+- **Fast inference** on local mainland servers (no VPN needed)
+
+```bash
+llm-switch provider add siliconflow-payg --key sk-your-key-here
+llm-switch provider add siliconflow-free --key sk-your-key-here
+```
 
 ---
 
@@ -105,7 +142,7 @@ The model runs entirely on CPU, takes ~2-3 seconds per response on modern hardwa
 
 ---
 
-## ☁️ Add Cloud Providers
+## ☁️ Cloud Provider Templates
 
 ```bash
 # See available templates
@@ -114,7 +151,7 @@ llm-switch provider templates
 
 ```text
 =======================================================
-  Provider 模板库
+  Provider Templates
 =======================================================
 
   ⭐ Coding Plan (Tier 1):
@@ -123,11 +160,13 @@ llm-switch provider templates
 
   💰 Pay-as-you-go (Tier 2):
     deepseek-payg             → https://api.deepseek.com/v1
-    siliconflow-payg          → https://api.siliconflow.cn/v1
     openai-payg               → https://api.openai.com/v1
+    openrouter-payg ★         → https://openrouter.ai/api/v1 (Recommended for intl.)
+    siliconflow-payg          → https://api.siliconflow.cn/v1 (Recommended for CN)
 
   🆓 Free Quota (Tier 3):
     siliconflow-free          → https://api.siliconflow.cn/v1
+    openrouter-free           → https://openrouter.ai/api/v1
 
   🏠 Local (Tier 4):
     qwen27b-direct            → http://192.168.1.100:8080/v1 (llama.cpp)
@@ -138,13 +177,16 @@ Add providers:
 
 ```bash
 # Add a coding plan (Tier 1 — tried first)
-llm-switch provider add deepseek-cp --key sk-your-deepseek-key
+llm-switch provider add deepseek-cp --key sk-you...-key
 
 # Add a pay-as-you-go backup (Tier 2)
-llm-switch provider add deepseek-payg --key sk-your-deepseek-key
+llm-switch provider add deepseek-payg --key sk-you...-key
+
+# Add OpenRouter (Tier 2) — one key for 400+ models
+llm-switch provider add openrouter-payg --key sk-or-v1...key
 
 # Add a free tier (Tier 3)
-llm-switch provider add siliconflow-free --key sk-your-siliconflow-key
+llm-switch provider add openrouter-free --key sk-or-v1...key
 
 # Add a local model (Tier 4) — connects to llama.cpp/Ollama
 llm-switch provider add qwen27b-direct
@@ -191,7 +233,9 @@ All tools that support OpenAI-compatible API connect to **one endpoint**:
 │  │          │    ↓ fail (401/402/timeout)                │
 │  │          │  → DeepSeek PAYG (Tier 2) ── 200? ──→ ✅  │
 │  │          │    ↓ fail                                  │
-│  │          │  → SiliconFlow Free (Tier 3) ── 200? ─→ ✅ │
+│  │          │  → OpenRouter PAYG (Tier 2) ─ 200? ──→ ✅ │
+│  │          │    ↓ fail                                  │
+│  │          │  → Free Quota (Tier 3) ──── 200? ──→ ✅   │
 │  │          │    ↓ fail                                  │
 │  │          │  → Local GPU (Tier 4) ────── 200? ──→ ✅  │
 │  │          │    ↓ fail                                  │

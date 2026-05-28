@@ -70,6 +70,7 @@
       "default_model": "deepseek-ai/DeepSeek-V3",
       "timeout": 15,
       "doc_url": "https://docs.siliconflow.cn/",
+      "registration_url": "https://cloud.siliconflow.cn?ref=llmswitch_xbs",
       "error_map": {
         "auth_failed":     { "status": [401], "body_contains": ["invalid_api_key", "Authentication failed"] },
         "quota_exhausted": { "status": [402], "body_contains": ["insufficient_balance"] },
@@ -104,6 +105,7 @@
       "default_model": "Qwen/Qwen2-7B-Instruct",
       "timeout": 15,
       "doc_url": "https://docs.siliconflow.cn/",
+      "registration_url": "https://cloud.siliconflow.cn?ref=llmswitch_xbs",
       "error_map": {
         "auth_failed":     { "status": [401], "body_contains": ["invalid_api_key"] },
         "quota_exhausted": { "status": [402, 429], "body_contains": ["quota", "rate_limit"] },
@@ -112,8 +114,26 @@
       "notes": "免费模型速度较慢，能力有限，适合兜底"
     },
     {
+      "id": "openrouter-payg",
+      "name": "OpenRouter Pay-as-you-go",
+      "tier": "payg",
+      "api_format": "openai",
+      "api_base": "https://openrouter.ai/api/v1",
+      "models": ["anthropic/claude-sonnet-4", "openai/gpt-4o", "google/gemini-2.0-flash-001", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-chat"],
+      "default_model": "deepseek/deepseek-chat",
+      "timeout": 20,
+      "doc_url": "https://openrouter.ai/keys",
+      "registration_url": "https://openrouter.ai/auth?ref=llmswitch",
+      "error_map": {
+        "auth_failed":     { "status": [401], "body_contains": ["Invalid API key", "Unauthorized"] },
+        "quota_exhausted": { "status": [402], "body_contains": ["insufficient_credits", "Insufficient Credits"] },
+        "rate_limited":    { "status": [429], "body_contains": ["rate_limited"] }
+      },
+      "notes": "One API key, 400+ models. New users get $1 free credits. Recommended for international users."
+    },
+    {
       "id": "openrouter-free",
-      "name": "OpenRouter 免费模型",
+      "name": "OpenRouter Free Models",
       "tier": "free",
       "api_format": "openai",
       "api_base": "https://openrouter.ai/api/v1",
