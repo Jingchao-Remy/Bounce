@@ -70,7 +70,7 @@
       "default_model": "deepseek-ai/DeepSeek-V3",
       "timeout": 15,
       "doc_url": "https://docs.siliconflow.cn/",
-      "registration_url": "https://cloud.siliconflow.cn?ref=llmswitch_xbs",
+      "registration_url": "https://cloud.siliconflow.cn/i/9tdpHwEm",
       "error_map": {
         "auth_failed":     { "status": [401], "body_contains": ["invalid_api_key", "Authentication failed"] },
         "quota_exhausted": { "status": [402], "body_contains": ["insufficient_balance"] },
@@ -105,7 +105,7 @@
       "default_model": "Qwen/Qwen2-7B-Instruct",
       "timeout": 15,
       "doc_url": "https://docs.siliconflow.cn/",
-      "registration_url": "https://cloud.siliconflow.cn?ref=llmswitch_xbs",
+      "registration_url": "https://cloud.siliconflow.cn/i/9tdpHwEm",
       "error_map": {
         "auth_failed":     { "status": [401], "body_contains": ["invalid_api_key"] },
         "quota_exhausted": { "status": [402, 429], "body_contains": ["quota", "rate_limit"] },

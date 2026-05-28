@@ -84,7 +84,7 @@ curl http://localhost:3001/v1/chat/completions \
 
 ### ▶️ 推荐：硅基流动
 
-[硅基流动 (SiliconFlow)](https://cloud.siliconflow.cn?ref=llmswitch_xbs) 是国内领先的 LLM 聚合平台，提供：
+[硅基流动 (SiliconFlow)](https://cloud.siliconflow.cn/i/9tdpHwEm) 是国内领先的 LLM 聚合平台，提供：
 
 - **首充 34 元送 14 元**，相当于 48 元余额
 - **免费模型**：Qwen2-7B、GLM-4-9B 等，适合兜底
@@ -92,7 +92,8 @@ curl http://localhost:3001/v1/chat/completions \
 - **国内服务器**低延迟推理，不需要 VPN
 
 ```bash
-# 1. 注册：https://cloud.siliconflow.cn?ref=llmswitch_xbs
+# 1. 注册：https://cloud.siliconflow.cn/i/9tdpHwEm
+#    （邀请码已自动填入，确认即可）
 # 2. 在控制台创建 API Key：https://cloud.siliconflow.cn/account/ak
 # 3. 添加到 Bounce：
 bounce provider add siliconflow-payg --key sk-你的密钥
@@ -264,7 +265,7 @@ bounce gateway start
   "api_base": "https://api.siliconflow.cn/v1",
   "models": ["deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-72B-Instruct"],
   "timeout": 15,
-  "registration_url": "https://cloud.siliconflow.cn?ref=llmswitch_xbs",
+  "registration_url": "https://cloud.siliconflow.cn/i/9tdpHwEm",
   "error_map": {
     "auth_failed":     {"status": [401], "body_contains": ["invalid_api_key"]},
     "quota_exhausted": {"status": [402], "body_contains": ["insufficient_balance"]},
