@@ -1,0 +1,452 @@
+#!/usr/bin/env python3
+"""
+LLM Switch — Web Management Panel (Phase 2)
+Flask-based web UI for managing model providers.
+
+Usage:
+  llm-switch-panel            # Start the web panel (default port 3000)
+  llm-switch-panel --port 8080
+  llm-switch-panel --daemon   # Start in background
+"""
+
+import os
+import sys
+import json
+import subprocess
+import threading
+import webbrowser
+from pathlib import Path
+
+# ── Config ──────────────────────────────────────────────────────────────
+CONFIG_DIR = os.path.expanduser("~/.llm-switch")
+CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
+# WSL <-> Windows integration
+def _get_win_user():
+    """Get the current Windows username for WSL path resolution."""
+    users_dir = "/mnt/c/Users"
+    if os.path.exists(users_dir):
+        for u in sorted(os.listdir(users_dir)):
+            if u not in (".", "..", "All Users", "Default", "Default User", "Public"):
+                full = os.path.join(users_dir, u)
+                if os.path.isdir(full) and not os.path.islink(full):
+                    return full
+    return os.path.expanduser("~")
+WIN_USER_HOME = _get_win_user()
+WINDOWS_ENV_DIR = os.path.join(WIN_USER_HOME, ".llm-switch")
+
+# Check HOME redirect (Hermes quirk)
+real_home = os.environ.get("HOME", os.path.expanduser("~"))
+alt_config = os.path.join(real_home, ".llm-switch", "config.json")
+if not os.path.exists(CONFIG_PATH) and os.path.exists(alt_config):
+    CONFIG_DIR = os.path.join(real_home, ".llm-switch")
+    CONFIG_PATH = alt_config
+
+# ── Data Layer ──────────────────────────────────────────────────────────
+
+def load_config():
+    with open(CONFIG_PATH) as f:
+        return json.load(f)
+
+def save_config(config):
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+def resolve(config, provider_id, key_path):
+    provider = next((p for p in config["providers"] if p["id"] == provider_id), None)
+    if not provider:
+        return None
+    parts = key_path.split(".")
+    val = provider
+    for part in parts:
+        if isinstance(val, dict):
+            val = val.get(part)
+        else:
+            return None
+    return val
+
+def get_env_for_provider(config, provider_id):
+    env = {}
+    tool = config["tools"]["claude_code"]
+    for env_var, key_path in tool["env_map"].items():
+        val = resolve(config, provider_id, key_path)
+        if val:
+            env[env_var] = str(val)
+    return env
+
+def write_env_files(config, provider_id):
+    """Write env files for both WSL and Windows."""
+    env = get_env_for_provider(config, provider_id)
+    
+    # WSL shell env
+    shell_path = os.path.join(CONFIG_DIR, "current.sh")
+    with open(shell_path, "w") as f:
+        f.write(f"# LLM Switch — Current provider: {provider_id}\n")
+        for k, v in env.items():
+            f.write(f"export {k}={json.dumps(v)}\n")
+    os.chmod(shell_path, 0o755)
+
+    # Windows batch env
+    os.makedirs(WINDOWS_ENV_DIR, exist_ok=True)
+    batch_path = os.path.join(WINDOWS_ENV_DIR, "current.bat")
+    with open(batch_path, "w") as f:
+        f.write(f"@echo off\nREM LLM Switch — Current provider: {provider_id}\n\n")
+        for k, v in env.items():
+            f.write(f"set {k}={v}\n")
+
+    # JSON files
+    env_data = {
+        "provider_id": provider_id,
+        "env": env,
+        "updated_at": subprocess.getoutput("date -Iseconds")
+    }
+    for p in [os.path.join(CONFIG_DIR, "current.env"), 
+              os.path.join(WINDOWS_ENV_DIR, "current.env")]:
+        with open(p, "w") as f:
+            json.dump(env_data, f, indent=2, ensure_ascii=False)
+
+    return env
+
+def do_switch(provider_id):
+    """Switch to a provider and return result."""
+    config = load_config()
+    provider = next((p for p in config["providers"] if p["id"] == provider_id), None)
+    if not provider:
+        return {"ok": False, "error": f"Provider '{provider_id}' not found"}
+    
+    config["active_provider"] = provider_id
+    save_config(config)
+    env = write_env_files(config, provider_id)
+    
+    return {
+        "ok": True,
+        "provider": {
+            "id": provider["id"],
+            "name": provider["name"],
+            "type": provider["type"],
+            "api_format": provider["api_format"],
+            "api_base": provider["api_base"],
+            "models": provider.get("models", {}),
+        },
+        "env": env
+    }
+
+def get_status():
+    """Get full status as dict."""
+    config = load_config()
+    active_id = config.get("active_provider", "NONE")
+    provider = next((p for p in config["providers"] if p["id"] == active_id), None)
+    env = get_env_for_provider(config, active_id) if provider else {}
+    return {
+        "active_provider": active_id,
+        "active_name": provider["name"] if provider else "NONE",
+        "providers": [
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "type": p["type"],
+                "api_format": p["api_format"],
+                "api_base": p["api_base"],
+                "models": list(set(p.get("models", {}).values())),
+                "is_active": p["id"] == active_id,
+                "notes": p.get("notes", ""),
+            }
+            for p in config["providers"]
+        ],
+        "env": env,
+    }
+
+def test_provider(provider_id):
+    """Test a provider with a simple API call."""
+    config = load_config()
+    provider = next((p for p in config["providers"] if p["id"] == provider_id), None)
+    if not provider:
+        return {"ok": False, "error": "Provider not found"}
+    
+    api_base = provider["api_base"]
+    api_key = provider.get("api_key", "")
+    api_format = provider["api_format"]
+    models = provider.get("models", {})
+    model = models.get("default", "")
+    
+    if api_format == "openai":
+        url = api_base.rstrip("/") + "/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        data = {"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 5}
+    elif api_format == "anthropic":
+        url = api_base.rstrip("/") + "/v1/messages" if "v1/messages" not in api_base else api_base
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json"
+        }
+        data = {"model": model, "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]}
+    else:
+        return {"ok": False, "error": f"Unknown format: {api_format}"}
+    
+    try:
+        import requests
+        resp = requests.post(url, headers=headers, json=data, timeout=10)
+        if resp.status_code == 200:
+            return {"ok": True, "status": 200, "response": resp.text[:200]}
+        else:
+            return {"ok": False, "status": resp.status_code, "error": resp.text[:200]}
+    except ImportError:
+        return {"ok": False, "error": "requests not installed"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Flask Web App
+# ═══════════════════════════════════════════════════════════════════════
+
+try:
+    from flask import Flask, jsonify, render_template_string, request
+except ImportError:
+    print("❌ Flask 未安装。请执行: pip install flask requests")
+    sys.exit(1)
+
+app = Flask(__name__)
+
+
+# ── HTML Template (inline, no external files) ──────────────────────────
+
+INDEX_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Switch Panel</title>
+<style>
+:root {
+  --bg: #f5f5f7;
+  --card: #ffffff;
+  --border: #e5e5e7;
+  --text: #1d1d1f;
+  --text2: #86868b;
+  --primary: #0071e3;
+  --primary-hover: #0077ed;
+  --green: #30d158;
+  --red: #ff453a;
+  --radius: 12px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.5;
+  max-width: 800px; margin: 0 auto; padding: 24px 16px;
+}
+h1 { font-size: 24px; font-weight: 600; margin-bottom: 4px; }
+.subtitle { color: var(--text2); font-size: 14px; margin-bottom: 24px; }
+.card {
+  background: var(--card); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 20px; margin-bottom: 16px;
+  border: 1px solid var(--border);
+}
+.card h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+.provider-list { display: flex; flex-direction: column; gap: 8px; }
+.provider-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border);
+  cursor: pointer; transition: all 0.15s ease;
+}
+.provider-item:hover { border-color: var(--primary); background: #f0f7ff; }
+.provider-item.active {
+  border-color: var(--green); background: #f0fff4;
+}
+.dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.dot.active { background: var(--green); }
+.dot.inactive { background: var(--border); }
+.p-name { flex: 1; font-weight: 500; font-size: 14px; }
+.p-type { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--bg); color: var(--text2); }
+.p-models { font-size: 12px; color: var(--text2); }
+.env-box {
+  background: #f5f5f7; border-radius: 6px; padding: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
+  line-height: 1.6; overflow-x: auto;
+}
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 6px; border: none;
+  font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+}
+.btn-primary { background: var(--primary); color: white; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.btn-outline:hover { border-color: var(--primary); color: var(--primary); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.toolbar { display: flex; gap: 8px; margin-bottom: 16px; }
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 500;
+  z-index: 1000; animation: fadeIn 0.2s ease;
+}
+.toast.success { background: var(--green); color: white; }
+.toast.error { background: var(--red); color: white; }
+@keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; } }
+.test-result { margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 12px; font-family: monospace; word-break: break-all; }
+.test-ok { background: #e8f8e8; color: #1a7a1a; }
+.test-err { background: #fde8e8; color: #a11a1a; }
+</style>
+</head>
+<body>
+<h1>⚡ LLM Switch</h1>
+<p class="subtitle">统一模型路由面板 · <span id="status-time">—</span></p>
+
+<div class="toolbar">
+  <button class="btn btn-primary" onclick="testActive()">🧪 测试当前</button>
+  <button class="btn btn-outline" onclick="refreshStatus()">🔄 刷新</button>
+</div>
+
+<div class="card">
+  <h2>当前环境变量</h2>
+  <div class="env-box" id="env-box">加载中...</div>
+</div>
+
+<div class="card">
+  <h2>Provider 列表</h2>
+  <div class="provider-list" id="provider-list">加载中...</div>
+</div>
+
+<div class="card" id="test-card" style="display:none">
+  <h2>测试结果</h2>
+  <div id="test-output"></div>
+</div>
+
+<script>
+async function refreshStatus() {
+  const r = await fetch('/api/status');
+  const data = await r.json();
+  
+  // Status time
+  document.getElementById('status-time').textContent = `当前: ${data.active_name}`;
+  
+  // Env box
+  const envBox = document.getElementById('env-box');
+  const env = data.env || {};
+  if (Object.keys(env).length === 0) {
+    envBox.textContent = '(无环境变量)';
+  } else {
+    envBox.innerHTML = Object.entries(env)
+      .map(([k, v]) => `<span style="color:#6e6e73">${k}</span>=<span style="color:#0071e3">${v}</span>`)
+      .join('<br>');
+  }
+  
+  // Provider list
+  const list = document.getElementById('provider-list');
+  list.innerHTML = data.providers.map(p => `
+    <div class="provider-item ${p.is_active ? 'active' : ''}" onclick="${p.is_active ? '' : `switchProvider('${p.id}')`}">
+      <div class="dot ${p.is_active ? 'active' : 'inactive'}"></div>
+      <div class="p-name">${p.name}</div>
+      <div class="p-type">${p.type === 'cloud' ? '☁️' : '🖥️'} ${p.api_format}</div>
+      <div class="p-models">${(p.models || []).join(', ')}</div>
+      ${p.is_active ? '<span style="font-size:11px;color:var(--green);font-weight:600">当前</span>' : ''}
+    </div>
+  `).join('');
+}
+
+async function switchProvider(id) {
+  const r = await fetch('/api/switch', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({provider_id: id})
+  });
+  const data = await r.json();
+  showToast(data.ok ? `✅ 已切换至 ${data.provider?.name || id}` : `❌ ${data.error}`, data.ok ? 'success' : 'error');
+  if (data.ok) refreshStatus();
+}
+
+async function testActive() {
+  const card = document.getElementById('test-card');
+  const out = document.getElementById('test-output');
+  card.style.display = 'block';
+  out.innerHTML = '<span style="color:var(--text2)">测试中...</span>';
+  
+  const r = await fetch('/api/test');
+  const data = await r.json();
+  
+  if (data.ok) {
+    out.innerHTML = `<div class="test-result test-ok">✅ 成功 (HTTP ${data.status}): ${data.response}</div>`;
+  } else {
+    out.innerHTML = `<div class="test-result test-err">❌ 失败 (HTTP ${data.status || '—'}): ${data.error}</div>`;
+  }
+}
+
+function showToast(msg, type) {
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2500);
+}
+
+refreshStatus();
+</script>
+</body>
+</html>"""
+
+
+@app.route("/")
+def index():
+    return render_template_string(INDEX_HTML)
+
+
+@app.route("/api/status")
+def api_status():
+    return jsonify(get_status())
+
+
+@app.route("/api/switch", methods=["POST"])
+def api_switch():
+    data = request.get_json()
+    provider_id = data.get("provider_id", "")
+    result = do_switch(provider_id)
+    return jsonify(result)
+
+
+@app.route("/api/test")
+def api_test():
+    config = load_config()
+    active_id = config.get("active_provider", "")
+    result = test_provider(active_id)
+    return jsonify(result)
+
+
+@app.route("/api/providers")
+def api_providers():
+    config = load_config()
+    return jsonify(config["providers"])
+
+
+# ── CLI Entry Point ──────────────────────────────────────────────────────
+
+def main():
+    port = 3000
+    daemon = False
+    
+    args = sys.argv[1:]
+    for i, arg in enumerate(args):
+        if arg == "--port" and i + 1 < len(args):
+            port = int(args[i + 1])
+        elif arg == "--daemon":
+            daemon = True
+    
+    if daemon:
+        import multiprocessing
+        p = multiprocessing.Process(target=lambda: app.run(host="0.0.0.0", port=port, debug=False))
+        p.daemon = True
+        p.start()
+        print(f"✅ LLM Switch Panel 已后台启动: http://localhost:{port}")
+        print(f"   停止: kill {p.pid}")
+    else:
+        print(f"⚡ LLM Switch Panel: http://localhost:{port}")
+        print(f"   按 Ctrl+C 停止")
+        app.run(host="0.0.0.0", port=port, debug=False)
+
+
+if __name__ == "__main__":
+    main()

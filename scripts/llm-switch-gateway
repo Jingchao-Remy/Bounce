@@ -1,0 +1,858 @@
+#!/usr/bin/env python3
+"""LLM Switch Gateway — OpenAI-compatible failover proxy.
+
+Routes each request through providers in tier priority order.
+Built-in local model (Qwen2.5-0.5B via llama-cpp-python) and
+static demo fallback work without any API key.
+
+Usage:
+  llm-switch-gateway                    # Start on default port 3001
+  llm-switch-gateway --no-demo          # Disable all built-in fallbacks
+  llm-switch-gateway --port 3002        # Custom port
+  llm-switch-gateway --daemon           # Background process
+"""
+
+import os
+import sys
+import json
+import time
+import logging
+import uuid
+
+import requests
+from flask import Flask, request, Response, jsonify
+
+# ── Config ───────────────────────────────────────────────────────────
+CONFIG_DIR = os.path.expanduser("~/.llm-switch")
+CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
+TEMPLATES_PATH = os.path.join(CONFIG_DIR, "templates.json")
+MODELS_DIR = os.path.join(CONFIG_DIR, "models")
+DEFAULT_PORT = 3001
+DEFAULT_TIMEOUT = 15
+
+LOCAL_MODEL_FILENAME = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+LOCAL_MODEL_URL = (
+    "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/"
+    "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+)
+
+# ── Logging ─────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("gateway")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 1. CONFIG LOADING
+# ═════════════════════════════════════════════════════════════════════
+
+def load_gateway_config():
+    """Load config + templates, merge, sort by tier priority."""
+    with open(CONFIG_PATH) as f:
+        config = json.load(f)
+
+    # Load templates
+    templates = {}
+    tiers = []
+    if os.path.exists(TEMPLATES_PATH):
+        with open(TEMPLATES_PATH) as f:
+            tpl_data = json.load(f)
+            for p in tpl_data.get("providers", []):
+                templates[p["id"]] = p
+            tiers = tpl_data.get("tiers", [])
+
+    tier_order = {t["id"]: t["order"] for t in tiers}
+
+    # Gateway settings
+    gw = config.get("gateway", {})
+    port = gw.get("port", DEFAULT_PORT)
+
+    # Build gateway provider list
+    providers = []
+    for p in config.get("providers", []):
+        if not p.get("gateway", False):
+            continue
+        prov = dict(p)
+
+        # Merge template fields if template_id is set
+        tid = p.get("template_id")
+        if tid and tid in templates:
+            tmpl = templates[tid]
+            for k, v in tmpl.items():
+                if k not in prov or prov[k] is None:
+                    prov[k] = v
+
+        providers.append(prov)
+
+    # Sort: tier order first, then original list order
+    providers.sort(key=lambda p: (
+        tier_order.get(p.get("tier", "local_small"), 99),
+        p.get("_order", 0)
+    ))
+
+    return port, providers, gw
+
+
+def resolve_api_key(provider):
+    """Get API key: inline > env:ref > env var by convention > empty."""
+    key = provider.get("api_key", "")
+    if key:
+        if key.startswith("env:"):
+            return os.environ.get(key[4:], "")
+        # If the key looks like a full key (not "env:" prefix, not masked), use it
+        if key and "..." not in key and len(key) > 10:
+            return key
+    # Fallback to env var convention: DEEPSEEK_CP_KEY, HUOSHAN_CP_KEY, etc.
+    env_var = provider.get("api_key_env", "")
+    if env_var:
+        return os.environ.get(env_var, "")
+    # Try conventional name: uppercase id + _KEY
+    conv_name = f"{provider['id'].upper().replace('-','_')}_KEY"
+    return os.environ.get(conv_name, "")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 2. ERROR CLASSIFICATION
+# ═════════════════════════════════════════════════════════════════════
+
+def classify_error(status_code, body_text, error_map=None):
+    """Classify a non-200 response into a failover reason."""
+    if error_map:
+        for reason, rule in error_map.items():
+            if status_code in rule.get("status", []):
+                contains = rule.get("body_contains", [])
+                if not contains or any(p.lower() in body_text.lower() for p in contains):
+                    return reason
+    if status_code == 0:
+        return "connection_failed"
+    if status_code >= 500:
+        return "server_error"
+    if status_code in (429, 402):
+        return "quota_exhausted" if status_code == 402 else "rate_limited"
+    if status_code == 401:
+        return "auth_failed"
+    if status_code == 403 and "QuotaExhausted" in body_text:
+        return "quota_exhausted"
+    if 400 <= status_code < 500:
+        return "client_error"
+    return None
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 3. LOCAL MODEL (llama-cpp-python, lazy-loaded)
+# ═════════════════════════════════════════════════════════════════════
+
+_local_llm = None  # singleton, lazy-loaded
+
+
+def get_local_model_path():
+    return os.path.join(MODELS_DIR, LOCAL_MODEL_FILENAME)
+
+
+def is_local_model_available():
+    """Check if model file exists AND llama-cpp-python can be imported."""
+    if not os.path.exists(get_local_model_path()):
+        return False
+    try:
+        import llama_cpp
+        return True
+    except ImportError:
+        return False
+
+
+def load_local_llm():
+    """Lazy-load the local model. Returns Llama instance or None."""
+    global _local_llm
+    if _local_llm is not None:
+        return _local_llm
+    model_path = get_local_model_path()
+    if not os.path.exists(model_path):
+        log.warning(f"Local model not found: {model_path}")
+        return None
+    try:
+        from llama_cpp import Llama
+        log.info(f"Loading local model: {model_path}")
+        _local_llm = Llama(
+            model_path=model_path,
+            n_ctx=2048,
+            n_threads=4,
+            verbose=False,
+        )
+        log.info(f"Local model loaded ({os.path.getsize(model_path)//1024//1024}MB)")
+        return _local_llm
+    except ImportError:
+        log.warning("llama-cpp-python not installed. Run: llm-switch install-local")
+        return None
+    except Exception as e:
+        log.warning(f"Failed to load local model: {e}")
+        return None
+
+
+def local_llm_chat(openai_request):
+    """Generate a response using the local model (synchronous non-streaming)."""
+    llm = load_local_llm()
+    if llm is None:
+        return None
+
+    # Map OpenAI messages to llama-cpp format
+    messages = []
+    for m in openai_request.get("messages", []):
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if isinstance(content, list):
+            texts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+            content = " ".join(texts)
+        messages.append({"role": role, "content": content})
+
+    max_tokens = openai_request.get("max_tokens", 512)
+    temperature = openai_request.get("temperature", 0.7)
+
+    try:
+        response = llm.create_chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=False,
+        )
+        return response
+    except Exception as e:
+        log.warning(f"Local model inference error: {e}")
+        return None
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 4. BUILT-IN STATIC DEMO (last-resort: no API keys, no local model)
+# ═════════════════════════════════════════════════════════════════════
+
+DEMO_TEMPLATE = """Hello from **LLM Switch Gateway** 🚀
+
+You said: _{msg}_
+
+This is a **built-in demo** — works when no AI providers or local models are configured.
+
+────────────────────────
+### 🔧 Set Up a Real AI Backend
+
+**Option 1: Install a tiny local model (recommended)**
+```bash
+llm-switch install-local
+```
+Downloads Qwen2.5-0.5B (~350MB) — runs on CPU, no API key needed.
+
+**Option 2: Add a cloud provider**
+```bash
+llm-switch provider add deepseek-cp --key sk-your-key
+llm-switch provider add siliconflow-free --key sk-your-key
+```
+
+### 📊 Default Provider Chain (UPS-style failover)
+
+| Tier | Type | How |
+|------|------|-----|
+| 🥇 1st | Coding Plan (包月) | DeepSeek / 火山方舟 |
+| 🥈 2nd | Pay-as-you-go (按量) | DeepSeek / OpenAI |
+| 🥉 3rd | Free Quota (免费) | SiliconFlow / OpenRouter |
+| 4th | Local GPU Model | llama.cpp / Ollama on your hardware |
+| 5th | **Local Tiny CPU** 🆕 | **Qwen2.5-0.5B** (if installed via `install-local`) |
+| 🛟 **6th** | **This static demo** | **Always available** |
+
+### 🎯 Why One Endpoint?
+
+> *"Like a UPS for your AI tools — configure once, never worry about downtime."*
+
+Every tool (Continue, Aider, Cline, etc.) points to `http://localhost:3001/v1`.
+When one provider runs out of quota, the next kicks in automatically.
+
+────────────────────────
+*💡 Run with `--no-demo` to disable built-in fallbacks.*"""
+
+
+def build_demo_content(user_msg):
+    return DEMO_TEMPLATE.format(msg=user_msg[:120] if user_msg else "(empty)")
+
+
+def build_demo_completion(user_msg):
+    content = build_demo_content(user_msg)
+    return {
+        "id": f"demo-{uuid.uuid4().hex}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": "demo-model",
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": content},
+            "finish_reason": "stop",
+        }],
+        "usage": {
+            "prompt_tokens": len(user_msg) // 4 + 8,
+            "completion_tokens": len(content) // 4 + 8,
+            "total_tokens": (len(user_msg) + len(content)) // 4 + 16,
+        },
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 5. FAILOVER ENGINE
+# ═════════════════════════════════════════════════════════════════════
+
+class FailoverEngine:
+    """Try providers in tier+priority order. Built-in fallbacks at the end."""
+
+    def __init__(self, providers, no_demo=False):
+        self.providers = list(providers)
+        self.no_demo = no_demo
+
+    def _extract_user_msg(self, openai_request):
+        messages = openai_request.get("messages", [])
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                content = m.get("content", "")
+                if isinstance(content, list):
+                    texts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+                    content = " ".join(texts)
+                return content
+        return ""
+
+    def route(self, openai_request):
+        """Returns (response_dict_or_generator, provider_id)."""
+        last_error = None
+
+        # ── Try configured providers ─────────────────────────
+        for prov in self.providers:
+            name = prov.get("name", prov["id"])
+            tier = prov.get("tier", "?")
+            log.info(f"  ➡ Trying [{name}] (tier: {tier})")
+            resp = self._try_http(prov, openai_request)
+            if resp is None:
+                log.warning(f"  ⚠️  [{name}] → connection_failed")
+                last_error = (prov["id"], "connection_failed", 0)
+                continue
+            body_text = resp.get("body_text", "")
+            reason = classify_error(resp.get("status_code", 0), body_text, prov.get("error_map"))
+            if reason:
+                log.warning(f"  ⚠️  [{name}] → {reason} (HTTP {resp.get('status_code')})")
+                last_error = (prov["id"], reason, resp.get("status_code"))
+                continue
+            # Success (or non-failover error)
+            if resp.get("status_code") == 200:
+                log.info(f"  ✅ [{name}] → 200 OK")
+            else:
+                log.warning(f"  ❌ [{name}] → HTTP {resp['status_code']} (not failover)")
+            return resp.get("body"), prov["id"]
+
+        if self.no_demo:
+            return None, last_error or ("none", "all_failed", 0)
+
+        # ── Tier 5: Local model (if installed) ────────────────
+        local_model_path = get_local_model_path()
+        has_local_model = os.path.exists(local_model_path)
+        try:
+            import llama_cpp
+            has_llama_cpp = True
+        except ImportError:
+            has_llama_cpp = False
+
+        if has_local_model and has_llama_cpp:
+            log.info("  ➡ Trying [Local Tiny CPU] (tier: local_tiny)")
+            try:
+                result = local_llm_chat(openai_request)
+                if result:
+                    log.info("  ✅ [Local Tiny CPU] → 200 OK (real model)")
+                    return result, "local-llama"
+                else:
+                    log.warning("  ⚠️  [Local Tiny CPU] → inference failed")
+            except Exception as e:
+                log.warning(f"  ⚠️  [Local Tiny CPU] → {e}")
+
+        # ── Tier 6: Static demo ───────────────────────────────
+        log.info("  ➡ Trying [Demo (built-in)] (tier: local_demo)")
+        user_msg = self._extract_user_msg(openai_request)
+        demo_body = build_demo_completion(user_msg)
+        log.info("  ✅ [Demo (built-in)] → 200 OK (fallback)")
+        return demo_body, "builtin-demo"
+
+    def _try_http(self, prov, openai_request):
+        """Make an HTTP request to a provider. Returns dict or None."""
+        base = prov.get("api_base", "").rstrip("/")
+        if not base:
+            return None
+        url = f"{base}/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        api_key = resolve_api_key(prov)
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        headers.update(prov.get("headers", {}))
+        try:
+            resp = requests.post(
+                url, json=openai_request, headers=headers,
+                timeout=prov.get("timeout", DEFAULT_TIMEOUT),
+                stream=openai_request.get("stream", False),
+            )
+            return {"body": resp, "status_code": resp.status_code, "body_text": resp.text}
+        except requests.exceptions.ConnectTimeout:
+            return None
+        except requests.exceptions.ConnectionError:
+            return None
+        except requests.exceptions.ReadTimeout:
+            return None
+        except Exception as e:
+            log.warning(f"  ⚠️  HTTP exception for {prov.get('id')}: {type(e).__name__}")
+            return None
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 6. FLASK APP
+# ═════════════════════════════════════════════════════════════════════
+
+app = Flask(__name__)
+
+
+@app.route("/v1/chat/completions", methods=["POST"])
+def handle_chat():
+    body = request.json
+    if not body:
+        return jsonify({"error": {"message": "empty request", "type": "invalid_request"}}), 400
+
+    _, providers, gw = load_gateway_config()
+    no_demo = gw.get("no_demo", False) or request.args.get("no_demo", "").lower() == "true"
+
+    engine = FailoverEngine(providers, no_demo=no_demo)
+    result, info = engine.route(body)
+
+    if result is None:
+        pname, reason, code = info if info else ("none", "unknown", 0)
+        return jsonify({
+            "error": {
+                "message": f"All providers unavailable. Last: [{pname}] → {reason}",
+                "type": "gateway_error", "last_provider": pname, "last_reason": reason,
+            }
+        }), 503
+
+    provider_id = info if isinstance(info, str) else info[0]
+    stream = body.get("stream", False)
+
+    # ── Built-in responses (local model or static demo) ──────
+    if provider_id in ("local-llama", "builtin-demo"):
+        if stream:
+            # Simulate streaming for built-in responses
+            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if not content:
+                content = result.get("choices", [{}])[0].get("delta", {}).get("content", "")
+
+            def gen_stream():
+                cid = result.get("id", f"demo-{uuid.uuid4().hex}")
+                import time as _t
+                yield f"data: {json.dumps({'id': cid, 'object': 'chat.completion.chunk', 'created': int(_t.time()), 'model': result.get('model', 'demo-model'), 'choices': [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n"
+                yield f"data: {json.dumps({'id': cid, 'object': 'chat.completion.chunk', 'created': int(_t.time()), 'model': result.get('model', 'demo-model'), 'choices': [{'index': 0, 'delta': {'content': content}, 'finish_reason': None}]})}\n\n"
+                yield f"data: {json.dumps({'id': cid, 'object': 'chat.completion.chunk', 'created': int(_t.time()), 'model': result.get('model', 'demo-model'), 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
+                yield "data: [DONE]\n\n"
+            return Response(gen_stream(), mimetype="text/event-stream",
+                            headers={"X-Provider-Id": provider_id})
+        return jsonify(result), 200, {"X-Provider-Id": provider_id}
+
+    # ── External provider response ────────────────────────────
+    if stream:
+        def generate():
+            try:
+                for chunk in result.iter_lines(decode_unicode=True):
+                    if chunk:
+                        yield chunk + "\n"
+            except Exception as e:
+                log.warning(f"  ⚠️ Stream error: {e}")
+                yield f"data: {json.dumps({'error': 'stream interrupted'})}\n\n"
+        return Response(generate(), mimetype="text/event-stream",
+                        headers={"X-Provider-Id": provider_id})
+
+    return jsonify(result.json()), 200, {"X-Provider-Id": provider_id}
+
+
+@app.route("/v1/models", methods=["GET"])
+def handle_models():
+    """Aggregate models from all providers + built-in options."""
+    _, providers, gw = load_gateway_config()
+    no_demo = gw.get("no_demo", False)
+    seen = set()
+    models = []
+
+    for p in providers:
+        prov_models = p.get("models", [])
+        if isinstance(prov_models, dict):
+            prov_models = list(set(prov_models.values()))
+        for m in prov_models:
+            if m not in seen:
+                seen.add(m)
+                models.append({
+                    "id": m, "object": "model",
+                    "created": int(time.time()),
+                    "owned_by": p.get("name", p["id"]),
+                })
+
+    # Built-in models
+    if not no_demo:
+        if is_local_model_available():
+            models.append({
+                "id": "local-tiny", "object": "model",
+                "created": int(time.time()),
+                "owned_by": "Qwen2.5-0.5B (local CPU)",
+            })
+        models.append({
+            "id": "demo-model", "object": "model",
+            "created": int(time.time()),
+            "owned_by": "LLM Switch Gateway (built-in demo)",
+        })
+
+    return jsonify({"object": "list", "data": models})
+
+
+@app.route("/health", methods=["GET"])
+def handle_health():
+    return jsonify({"status": "ok", "service": "llm-switch-gateway"})
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 7. FIRST-RUN SETUP PROMPT
+# ═════════════════════════════════════════════════════════════════════
+
+def prompt_install_local(is_daemon=False):
+    """Interactive prompt: ask user if they want to install a local model."""
+    if is_daemon:
+        return  # No prompt in daemon mode
+
+    # Already installed?
+    if os.path.exists(get_local_model_path()):
+        try:
+            import llama_cpp
+            return  # Both model and library exist
+        except ImportError:
+            pass  # Library missing, still prompt
+
+    print(f"\n{'='*55}")
+    print(f"  🔧 No AI providers configured for LLM Switch Gateway")
+    print(f"{'='*55}")
+    print(f"\n  Would you like to install a tiny local AI model now?")
+    print(f"\n  📦 Qwen2.5-0.5B (~350MB) — runs on CPU, no API key needed.")
+    print(f"  ⚡ Works offline, always available as fallback.")
+    print(f"\n  Or set up cloud providers later with:")
+    print(f"    llm-switch provider add deepseek-cp --key sk-xxx")
+    print(f"    llm-switch provider add siliconflow-free --key sk-xxx\n")
+
+    try:
+        ans = input("  Download & install local model? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        ans = "n"
+
+    if ans not in ("", "y", "yes"):
+        print("  ⏭️  Skipped. Install later: llm-switch install-local")
+        print(f"\n{'='*55}")
+        return
+
+    print()
+    _run_install_local()
+
+
+def _detect_ollama():
+    """Check if Ollama is installed and running."""
+    try:
+        import subprocess as sp
+        r = sp.run(["which", "ollama"], capture_output=True, text=True)
+        has_binary = r.returncode == 0
+    except:
+        has_binary = False
+    try:
+        import urllib.request
+        urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2)
+        ollama_running = True
+    except:
+        ollama_running = False
+    return has_binary, ollama_running
+
+
+def _detect_platform():
+    """Return short platform label: linux, windows, mac, or unknown."""
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform.startswith("win") or sys.platform.startswith("cygwin"):
+        return "windows"
+    if sys.platform.startswith("darwin"):
+        return "mac"
+    return "unknown"
+
+
+def _install_llama_cpp_python():
+    """Try to pip install llama-cpp-python with platform-appropriate flags."""
+    pip_cmd = [sys.executable, "-m", "pip", "install", "llama-cpp-python",
+               "--quiet", "--progress-bar", "off",
+               "--extra-index-url", "https://abetlen.github.io/llama-cpp-python/whl/cpu"]
+
+    # Try 1: normal install
+    try:
+        import subprocess as sp
+        sp.check_call(pip_cmd, stderr=sp.STDOUT, timeout=120)
+        return True
+    except sp.CalledProcessError:
+        pass
+    except Exception:
+        pass
+
+    # Try 2: with --break-system-packages (Ubuntu 23.10+, Debian 12+, PEP 668)
+    try:
+        import subprocess as sp
+        sp.check_call(pip_cmd + ["--break-system-packages"], stderr=sp.STDOUT, timeout=120)
+        return True
+    except sp.CalledProcessError:
+        pass
+    except Exception:
+        pass
+
+    # Try 3: without CPU wheel index (fallback for arm64 or unusual platforms)
+    try:
+        import subprocess as sp
+        sp.check_call(
+            [sys.executable, "-m", "pip", "install", "llama-cpp-python",
+             "--quiet", "--progress-bar", "off"],
+            stderr=sp.STDOUT, timeout=180,
+        )
+        return True
+    except:
+        pass
+
+    return False
+
+
+def _download_model(model_path):
+    """Download the GGUF model. Tries multiple sources and methods."""
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    if os.path.exists(model_path):
+        print(f"  ✅ Model already exists ({os.path.getsize(model_path)//1024//1024}MB)")
+        return True
+
+    print(f"  ⬇️  Downloading Qwen2.5-0.5B (~350MB)...")
+
+    # Download URLs in priority order
+    urls = [
+        LOCAL_MODEL_URL,  # HuggingFace primary
+    ]
+
+    for url in urls:
+        print(f"     Source: {url.split('/resolve/')[0].split('//')[1]}")
+        try:
+            import urllib.request
+            def progress(count, block_size, total_size):
+                if total_size > 0:
+                    pct = min(100, count * block_size * 100 // total_size)
+                    downloaded = count * block_size // (1024 * 1024)
+                    total_mb = total_size // (1024 * 1024)
+                    print(f"\r     ⏳ {downloaded}MB / {total_mb}MB ({pct}%)", end="", flush=True)
+            urllib.request.urlretrieve(url, model_path, reporthook=progress)
+            print()
+            return True
+        except Exception as e:
+            print(f"\r     ⚠️  Failed via urllib: {e}")
+            continue
+
+    # Final fallback: curl
+    print("     Trying curl...")
+    import subprocess as sp
+    for url in urls:
+        ret = sp.run(
+            ["curl", "-L", "--progress-bar", "-o", model_path, url],
+            capture_output=True, timeout=600,
+        )
+        if ret.returncode == 0 and os.path.exists(model_path) and os.path.getsize(model_path) > 1000000:
+            return True
+
+    return False
+
+
+def _run_install_local():
+    """Run the installation process with multiple fallback paths."""
+    platform = _detect_platform()
+    print(f"  🖥️  Detected platform: {platform}")
+
+    has_ollama, ollama_running = _detect_ollama()
+
+    # ── Path A: Ollama is already running ──────────────────────
+    if ollama_running:
+        print("  🦙 Ollama detected! Using Ollama instead.")
+        print("  📝 Registering Ollama as local provider...")
+        config = _load_or_create_config()
+        local_prov = {
+            "id": "local-ollama",
+            "name": "Ollama Local (auto-detected)",
+            "type": "local",
+            "tier": "local_tiny",
+            "gateway": True,
+            "api_base": "http://localhost:11434/v1",
+            "models": ["local-tiny"],
+            "timeout": 60,
+        }
+        _register_provider(config, local_prov)
+        print("  ✅ Ollama registered as local model provider!")
+        print("\n  💡 Pull a small model:")
+        print("     ollama pull qwen2.5:0.5b")
+        return True
+
+    # ── Path B: Install llama-cpp-python + GGUF ────────────────
+    print("  📦 Step 1/3: Installing llama-cpp-python...")
+    success = _install_llama_cpp_python()
+    if not success:
+        # Give platform-specific advice
+        print("  ❌ Could not install llama-cpp-python automatically.")
+        print()
+        print(f"  {'='*51}")
+        print(f"  Manual installation guide for {platform}")
+        print(f"  {'='*51}")
+        if platform == "linux":
+            print()
+            print("    pip install llama-cpp-python")
+        elif platform == "windows":
+            print()
+            print("    # Option A: Precompiled wheel (recommended)")
+            print("    pip install llama-cpp-python --extra-index-url")
+            print("      https://abetlen.github.io/llama-cpp-python/whl/cpu")
+            print()
+            print("    # Option B: With Visual Studio Build Tools")
+            print("    set CMAKE_ARGS=-DLLAMA_CUBLAS=off")
+            print("    pip install llama-cpp-python")
+        else:
+            print("    pip install llama-cpp-python")
+        print()
+        print("  Or use Ollama (simpler): https://ollama.com")
+        return False
+
+    print("  ✅ llama-cpp-python installed")
+
+    # Step 2: Download model
+    print("  ⬇️  Step 2/3: Downloading Qwen2.5-0.5B (~350MB)...")
+    model_path = get_local_model_path()
+    dl_ok = _download_model(model_path)
+    if not dl_ok:
+        print("  ❌ Download failed. Try manually:")
+        print(f"     curl -L -o {model_path} {LOCAL_MODEL_URL}")
+        return False
+
+    print(f"  ✅ Downloaded: {os.path.getsize(model_path)//1024//1024}MB")
+
+    # Step 3: Register provider
+    print("  📝 Step 3/3: Registering local model provider...")
+    config = _load_or_create_config()
+    local_prov = {
+        "id": "local-llama",
+        "name": "Local Tiny CPU (Qwen2.5-0.5B)",
+        "type": "local",
+        "tier": "local_tiny",
+        "gateway": True,
+        "api_base": "",
+        "models": ["local-tiny"],
+        "timeout": 60,
+    }
+    _register_provider(config, local_prov)
+
+    print(f"\n{'='*55}")
+    print(f"  🎉 Local model installed and configured!")
+    print(f"{'='*55}")
+    print(f"\n  Restart the Gateway:")
+    print(f"    llm-switch gateway restart")
+    print(f"\n  Or just wait — next request will use the real model.\n")
+    return True
+
+
+def _load_or_create_config():
+    """Load config.json or create an empty one."""
+    try:
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"providers": []}
+
+
+def _register_provider(config, provider_dict):
+    """Add or update a provider in config.json."""
+    updated = False
+    for i, p in enumerate(config.get("providers", [])):
+        if p["id"] == provider_dict["id"]:
+            config["providers"][i] = provider_dict
+            updated = True
+            break
+    if not updated:
+        config.setdefault("providers", []).append(provider_dict)
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 8. MAIN
+# ═════════════════════════════════════════════════════════════════════
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="LLM Switch Gateway")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--daemon", action="store_true")
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--no-demo", action="store_true",
+                        help="Disable built-in demo fallback")
+    parser.add_argument("--no-prompt", action="store_true",
+                        help="Skip first-run setup prompt")
+    args = parser.parse_args()
+
+    if args.debug:
+        log.setLevel(logging.DEBUG)
+
+    if args.daemon:
+        pid = os.fork()
+        if pid > 0:
+            print(f"✅ LLM Switch Gateway started (PID {pid}) on :{args.port}")
+            sys.exit(0)
+
+    _, providers, gw = load_gateway_config()
+    no_demo = args.no_demo
+
+    # First-run prompt (only if no providers and prompt not suppressed)
+    gateway_providers = [p for p in providers if p.get("gateway")]
+    if not gateway_providers and not args.no_prompt:
+        prompt_install_local(is_daemon=args.daemon)
+        # Reload config after potential install
+        _, providers, gw = load_gateway_config()
+        gateway_providers = [p for p in providers if p.get("gateway")]
+
+    print(f"\n{'='*55}")
+    print(f"  LLM Switch Gateway — http://localhost:{args.port}")
+    print(f"{'='*55}")
+
+    if gateway_providers:
+        print(f"\n  Provider chain ({len(gateway_providers)} tiers):")
+        for p in gateway_providers:
+            tier = p.get("tier", "?")
+            name = p.get("name", p["id"])
+            base = p.get("api_base", "")
+            if base:
+                short = base.split("://", 1)[-1][:40]
+                print(f"    [{tier:15s}] {name:25s} → {short}")
+            else:
+                print(f"    [{tier:15s}] {name:25s} → (in-process)")
+    else:
+        print(f"\n  ⚠️  No providers configured.")
+        print(f"     Install local model: llm-switch install-local")
+        print(f"     Add cloud provider:  llm-switch provider add <template> --key <key>")
+
+    # Show built-in fallbacks
+    has_local = is_local_model_available()
+    if has_local:
+        print(f"    [local_tiny      ] Local Tiny CPU (Qwen2.5-0.5B) → in-process AI")
+    if not no_demo:
+        tier_name = "tiny_cpu" if has_local else "local_demo"
+        label = "Static Demo (ultimate fallback)" if has_local else "Static Demo (fallback)"
+        print(f"    [{tier_name:15s}] {label:32s} → always available")
+    if not no_demo and not has_local:
+        print(f"                           (install a real model: llm-switch install-local)")
+
+    print(f"\n  📡 POST /v1/chat/completions   ← OpenAI 格式")
+    print(f"  📡 GET  /v1/models              ← 聚合模型列表")
+    print(f"  📡 GET  /health                  ← 健康检查")
+    print(f"\n  Ctrl+C to stop\n")
+
+    app.run(host="0.0.0.0", port=args.port, debug=False)
+
+
+if __name__ == "__main__":
+    main()

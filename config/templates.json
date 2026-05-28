@@ -1,0 +1,132 @@
+{
+  "_version": "1.0.0",
+  "_description": "LLM Switch Gateway — Provider 模板库。用户通过模板添加 PROVIDER，自动填入 api_base、错误码模式等。",
+  "tiers": [
+    { "id": "coding_plan",  "name": "包月 Coding Plan", "order": 1, "icon": "⭐" },
+    { "id": "payg",         "name": "按量付费",         "order": 2, "icon": "💰" },
+    { "id": "free",         "name": "免费额度",         "order": 3, "icon": "🆓" },
+    { "id": "local_large",  "name": "本地大模型(GPU)",  "order": 4, "icon": "🖥️" },
+    { "id": "local_small",  "name": "本地小模型(CPU)",  "order": 5, "icon": "💻" }
+  ],
+  "providers": [
+    {
+      "id": "deepseek-cp",
+      "name": "DeepSeek Coding Plan",
+      "tier": "coding_plan",
+      "api_format": "openai",
+      "api_base": "https://api.deepseek.com/v1",
+      "models": ["deepseek-chat", "deepseek-reasoner"],
+      "default_model": "deepseek-chat",
+      "timeout": 15,
+      "doc_url": "https://platform.deepseek.com/",
+      "error_map": {
+        "auth_failed":     { "status": [401], "body_contains": ["invalid_api_key", "Invalid API-key"] },
+        "quota_exhausted": { "status": [402], "body_contains": ["insufficient_quota", "Insufficient balance"] },
+        "rate_limited":    { "status": [429], "body_contains": ["rate_limit"] }
+      },
+      "notes": "包月 Coding Plan，建议设为 Tier 1 主力"
+    },
+    {
+      "id": "huoshan-cp",
+      "name": "火山方舟 Coding Plan",
+      "tier": "coding_plan",
+      "api_format": "openai",
+      "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+      "models": ["doubao-1.5-pro-256k", "deepseek-r1", "doubao-1.5-lite-32k"],
+      "default_model": "doubao-1.5-pro-256k",
+      "timeout": 15,
+      "doc_url": "https://console.volcengine.com/ark/",
+      "error_map": {
+        "auth_failed":     { "status": [401], "body_contains": ["AccessDenied", "access key"] },
+        "quota_exhausted": { "status": [403], "body_contains": ["QuotaExhausted"] },
+        "rate_limited":    { "status": [429], "body_contains": ["Throttling"] }
+      },
+      "notes": "⚠️ 配额耗尽返回 403 不是 429，模板已自动处理"
+    },
+    {
+      "id": "deepseek-payg",
+      "name": "DeepSeek 按量付费",
+      "tier": "payg",
+      "api_format": "openai",
+      "api_base": "https://api.deepseek.com/v1",
+      "models": ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"],
+      "default_model": "deepseek-v4-flash",
+      "timeout": 15,
+      "doc_url": "https://platform.deepseek.com/",
+      "error_map": {
+        "auth_failed":     { "status": [401], "body_contains": ["invalid_api_key"] },
+        "quota_exhausted": { "status": [402], "body_contains": ["insufficient_quota"] },
+        "rate_limited":    { "status": [429], "body_contains": ["rate_limit"] }
+      },
+      "notes": "包月 Coding Plan 用完自动切换到此层"
+    },
+    {
+      "id": "siliconflow-payg",
+      "name": "硅基流动 按量付费",
+      "tier": "payg",
+      "api_format": "openai",
+      "api_base": "https://api.siliconflow.cn/v1",
+      "models": ["deepseek-ai/DeepSeek-V3", "Pro/deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-72B-Instruct", "Qwen/Qwen3-235B-A22B"],
+      "default_model": "deepseek-ai/DeepSeek-V3",
+      "timeout": 15,
+      "doc_url": "https://docs.siliconflow.cn/",
+      "error_map": {
+        "auth_failed":     { "status": [401], "body_contains": ["invalid_api_key", "Authentication failed"] },
+        "quota_exhausted": { "status": [402], "body_contains": ["insufficient_balance"] },
+        "rate_limited":    { "status": [429], "body_contains": ["rate_limit"] }
+      },
+      "notes": "支持多种开源模型，按 Token 计费"
+    },
+    {
+      "id": "openai-payg",
+      "name": "OpenAI 按量付费",
+      "tier": "payg",
+      "api_format": "openai",
+      "api_base": "https://api.openai.com/v1",
+      "models": ["gpt-4o", "gpt-4o-mini", "o3", "o4-mini", "gpt-4.1", "gpt-4.1-mini"],
+      "default_model": "gpt-4o-mini",
+      "timeout": 20,
+      "doc_url": "https://platform.openai.com/",
+      "error_map": {
+        "auth_failed":     { "status": [401], "body_contains": ["invalid_api_key", "Incorrect API key"] },
+        "quota_exhausted": { "status": [402, 429], "body_contains": ["insufficient_quota", "exceeded your current quota"] },
+        "rate_limited":    { "status": [429], "body_contains": ["rate_limit"] }
+      },
+      "notes": ""
+    },
+    {
+      "id": "siliconflow-free",
+      "name": "硅基流动 免费模型",
+      "tier": "free",
+      "api_format": "openai",
+      "api_base": "https://api.siliconflow.cn/v1",
+      "models": ["Qwen/Qwen2-7B-Instruct", "THUDM/glm-4-9b-chat"],
+      "default_model": "Qwen/Qwen2-7B-Instruct",
+      "timeout": 15,
+      "doc_url": "https://docs.siliconflow.cn/",
+      "error_map": {
+        "auth_failed":     { "status": [401], "body_contains": ["invalid_api_key"] },
+        "quota_exhausted": { "status": [402, 429], "body_contains": ["quota", "rate_limit"] },
+        "rate_limited":    { "status": [429], "body_contains": ["rate_limit"] }
+      },
+      "notes": "免费模型速度较慢，能力有限，适合兜底"
+    },
+    {
+      "id": "openrouter-free",
+      "name": "OpenRouter 免费模型",
+      "tier": "free",
+      "api_format": "openai",
+      "api_base": "https://openrouter.ai/api/v1",
+      "models": ["google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.2-3b-instruct:free"],
+      "default_model": "google/gemini-2.0-flash-exp:free",
+      "timeout": 15,
+      "doc_url": "https://openrouter.ai/",
+      "error_map": {
+        "auth_failed":     { "status": [401], "body_contains": ["Invalid API key"] },
+        "quota_exhausted": { "status": [402], "body_contains": ["insufficient_credits"] },
+        "rate_limited":    { "status": [429], "body_contains": ["rate_limited"] }
+      },
+      "notes": "免费模型随时可能被移除"
+    }
+  ]
+}
