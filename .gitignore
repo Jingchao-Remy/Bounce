@@ -2,7 +2,7 @@ config.json
 __pycache__/
 *.pyc
 *.gguf
-.env# Dev working copies (synced to scripts/)
+.env# Dev working copies (synced to src/)
 bounce.py
 bounce-gateway.py
 bounce-panel.py
