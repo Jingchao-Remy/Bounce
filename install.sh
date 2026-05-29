@@ -6,7 +6,7 @@ set -e
 
 INSTALL_DIR="${HOME}/.local/bin"
 CONFIG_DIR="${HOME}/.bounce"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/scripts" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/src" && pwd)"
 CONFIG_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/config" && pwd)"
 
 echo "📦 Bounce Gateway — Installing"

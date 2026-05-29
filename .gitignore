@@ -10,7 +10,7 @@ bounce-gateway-start.sh
 config.json
 templates.json
 
-# Root copies (use docs/ and scripts/ instead)
+# Root copies (use docs/ and src/ instead)
 BOUNCE_DEV_DOC.md
 pi-tool-comparison.md
 bounce-gateway-start.sh
