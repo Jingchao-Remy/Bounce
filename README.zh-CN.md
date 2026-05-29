@@ -26,6 +26,31 @@ flowchart LR
 
 ---
 
+## 🎯 核心理念：一次配置，永不宕机
+
+**Bounce 解决一个简单但痛苦的问题：你的 IDE 和 AI 工具需要多个 LLM Provider，但你不想每换一个就改一遍配置。**
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                   你的 IDE / 智能体                         │
+│   TRAE · VS Code · Claude Code · Hermes · Crush · Continue │
+└──────────────────────┬────────────────────────────────────┘
+                       │  OpenAI 格式
+                       │  http://localhost:3001/v1
+                       ▼
+┌───────────────────────────────────────────────────────────┐
+│                   Bounce Gateway                          │
+│                                                           │
+│   包月 Plan ─→ 按量付费 ─→ 免费额度 ─→ 本地GPU ─→ CPU兜底  │
+│                                                           │
+│   策略：第一个 200 胜出。你只需配一次，后面全自动。          │
+└───────────────────────────────────────────────────────────┘
+```
+
+**IDE 只配一次**（指向 `localhost:3001/v1`，OpenAI 格式），Bounce 内部自动做多层 failover 路由。用户要做的只是在 Bounce 里添加 Provider + 填 key。
+
+> 💡 **你不需要关心后端是 DeepSeek 还是本地模型。Bounce 统一了入口，你只和 OpenAI 格式打交道。**
+
 ## ✨ 特性
 
 - **🔌 统一端点** — 所有 AI 工具指向 `http://localhost:3001/v1`，一次配置全家通用
@@ -207,8 +232,10 @@ bounce gateway start
 
 | 工具 | 配置方式 |
 |------|---------|
+| [TRAE CN](https://docs.trae.cn/ide/models) | 设置 > 模型 > 添加模型 > 自定义配置：`OpenAI Chat Completions 格式`，地址 `http://localhost:3001/v1`，模型 ID `deepseek-v4-flash`，密钥 `bounce`，模型系列选 `DeepSeek-4 系列` |
 | [Continue](https://docs.continue.dev/) | `apiBase: "http://localhost:3001/v1"` |
 | [Cline](https://github.com/cline/cline) | OpenAI 兼容提供商 → `http://localhost:3001/v1` |
+| [Crush](https://github.com/charmbracelet/crush) | 配置 `base_url: "http://localhost:3001/v1"`，`type: "openai-compat"` |
 | [Aider](https://aider.chat/) | `export OPENAI_API_BASE=http://localhost:3001/v1` |
 | [Hermes Agent](https://hermes-agent.nousresearch.com/) | 添加 provider，`base_url: http://localhost:3001/v1` |
 | [OpenAI Python SDK](https://pypi.org/project/openai/) | `client = OpenAI(base_url="http://localhost:3001/v1")` |

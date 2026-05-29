@@ -26,6 +26,33 @@ flowchart LR
 
 ---
 
+## 🎯 Core Philosophy: Configure Once, Never Down
+
+**Bounce solves one simple but painful problem: your IDE and AI tools need multiple LLM providers, but you don't want to reconfigure every time one changes.**
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                 Your IDE / AI Agent                        │
+│   TRAE · VS Code · Claude Code · Hermes · Crush · Continue │
+└──────────────────────┬────────────────────────────────────┘
+                       │  OpenAI format
+                       │  http://localhost:3001/v1
+                       ▼
+┌───────────────────────────────────────────────────────────┐
+│                   Bounce Gateway                          │
+│                                                           │
+│   Coding Plan ─→ Pay-as-you-go ─→ Free ─→ Local GPU ─→ CPU│
+│                                                           │
+│   Strategy: First 200 wins. Configure once, forget it.    │
+└───────────────────────────────────────────────────────────┘
+```
+
+**Your IDE is configured once** (point at `localhost:3001/v1`, OpenAI format). Bounce handles the multi-layer failover routing internally. All you do is add providers + paste API keys in Bounce.
+
+> 💡 **You don't need to care whether the backend is DeepSeek or a local model. Bounce unifies the entry point — you only deal with the OpenAI format.**
+
+---
+
 ## ✨ Features
 
 - **🔌 One endpoint for all tools** — Point every AI tool at `http://localhost:3001/v1`
@@ -208,8 +235,10 @@ All tools that support OpenAI-compatible API connect to **one endpoint**:
 
 | Tool | Configuration |
 |------|--------------|
+| [TRAE CN](https://docs.trae.cn/ide/models) | Settings > Models > Add > Custom: OpenAI Chat Completions, URL `http://localhost:3001/v1`, model `deepseek-v4-flash`, key `bounce`, series DeepSeek-4 Series |
 | [Continue](https://docs.continue.dev/) | `apiBase: "http://localhost:3001/v1"` |
 | [Cline](https://github.com/cline/cline) | OpenAI-compatible provider → `http://localhost:3001/v1` |
+| [Crush](https://github.com/charmbracelet/crush) | Configure `base_url: "http://localhost:3001/v1"`, `type: "openai-compat"` |
 | [Aider](https://aider.chat/) | `export OPENAI_API_BASE=http://localhost:3001/v1` |
 | [Hermes Agent](https://hermes-agent.nousresearch.com/) | Add a provider with `base_url: http://localhost:3001/v1` |
 | [OpenAI Python SDK](https://pypi.org/project/openai/) | `client = OpenAI(base_url="http://localhost:3001/v1")` |
