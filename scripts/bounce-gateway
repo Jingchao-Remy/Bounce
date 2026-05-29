@@ -97,17 +97,30 @@ def resolve_api_key(provider):
     key = provider.get("api_key", "")
     if key:
         if key.startswith("env:"):
-            return os.environ.get(key[4:], "")
-        # If the key looks like a full key (not "env:" prefix, not masked), use it
-        if key and "..." not in key and len(key) > 10:
+            result = os.environ.get(key[4:], "")
+            if result:
+                log.info(f"    resolve_api_key: env: '{key[4:]}' → SET")
+            else:
+                log.warning(f"    resolve_api_key: env: '{key[4:]}' → NOT SET")
+            return result
+        if key and "..." not in key and len(key) >= 6:
+            log.info(f"    resolve_api_key: inline key → SET")
             return key
-    # Fallback to env var convention: DEEPSEEK_CP_KEY, HUOSHAN_CP_KEY, etc.
     env_var = provider.get("api_key_env", "")
     if env_var:
-        return os.environ.get(env_var, "")
-    # Try conventional name: uppercase id + _KEY
+        result = os.environ.get(env_var, "")
+        if result:
+            log.info(f"    resolve_api_key: env var '{env_var}' → SET")
+        else:
+            log.warning(f"    resolve_api_key: env var '{env_var}' → NOT SET — set it via: export {env_var}=<your-key>")
+        return result
     conv_name = f"{provider['id'].upper().replace('-','_')}_KEY"
-    return os.environ.get(conv_name, "")
+    result = os.environ.get(conv_name, "")
+    if result:
+        log.info(f"    resolve_api_key: convention '{conv_name}' → SET")
+    else:
+        log.warning(f"    resolve_api_key: no key found for provider '{provider['id']}'. Set {env_var or conv_name} env var or api_key in config.")
+    return result
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -315,6 +328,8 @@ class FailoverEngine:
     def route(self, openai_request):
         """Returns (response_dict_or_generator, provider_id)."""
         last_error = None
+        requested_model = openai_request.get("model", "unknown")
+        log.info(f"  📥 route() called — requested model: '{requested_model}'")
 
         # ── Try configured providers ─────────────────────────
         for prov in self.providers:
@@ -370,23 +385,74 @@ class FailoverEngine:
         log.info("  ✅ [Demo (built-in)] → 200 OK (fallback)")
         return demo_body, "builtin-demo"
 
+    @staticmethod
+    def _resolve_model(prov, requested_model):
+        """Map the requested model name to what the provider actually supports.
+
+        Strategy:
+        1. If provider has a model_map dict (incoming→actual), use it.
+        2. If requested model is in provider's models list, keep it.
+        3. Otherwise, use provider's default_model, or the first model in the list.
+        """
+        # Direct model_map (incoming → actual)
+        model_map = prov.get("model_map", {})
+        if requested_model in model_map:
+            return model_map[requested_model]
+
+        # Provider's supported models
+        models = prov.get("models", [])
+        if isinstance(models, dict):
+            models = list(set(models.values()))
+
+        if not models:
+            return requested_model  # No mapping available, pass through
+
+        if requested_model in models:
+            return requested_model  # Already supported
+
+        # Strip prefixes like "openai/" that some tools add
+        stripped = requested_model.split("/", 1)[-1] if "/" in requested_model else requested_model
+        if stripped in models:
+            return stripped
+
+        # Fall back to default_model or first model
+        default = prov.get("default_model")
+        if default and default in models:
+            return default
+        return models[0]
+
     def _try_http(self, prov, openai_request):
         """Make an HTTP request to a provider. Returns dict or None."""
         base = prov.get("api_base", "").rstrip("/")
         if not base:
             return None
         url = f"{base}/chat/completions"
+
+        # Remap model name to what this provider supports
+        request_with_remapped_model = dict(openai_request)
+        original_model = request_with_remapped_model.get("model", "")
+        mapped_model = self._resolve_model(prov, original_model)
+        if mapped_model != original_model:
+            request_with_remapped_model["model"] = mapped_model
+            log.info(f"    model remap: '{original_model}' → '{mapped_model}'")
+        else:
+            request_with_remapped_model["model"] = original_model
         headers = {"Content-Type": "application/json"}
         api_key = resolve_api_key(prov)
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         headers.update(prov.get("headers", {}))
         try:
-            resp = requests.post(
-                url, json=openai_request, headers=headers,
+            # Explicitly disable system proxy for cloud providers (直接可达)
+            session = requests.Session()
+            session.trust_env = False
+            resp = session.post(
+                url, json=request_with_remapped_model, headers=headers,
                 timeout=prov.get("timeout", DEFAULT_TIMEOUT),
                 stream=openai_request.get("stream", False),
             )
+            if resp.status_code != 200:
+                log.warning(f"    ❌ HTTP {resp.status_code} from {url[:60]}... body[:200]={resp.text[:200]}")
             return {"body": resp, "status_code": resp.status_code, "body_text": resp.text}
         except requests.exceptions.ConnectTimeout:
             return None
@@ -406,15 +472,118 @@ class FailoverEngine:
 app = Flask(__name__)
 
 
-@app.route("/v1/chat/completions", methods=["POST"])
-def handle_chat():
+@app.route("/v1/responses", methods=["POST"])
+def handle_responses():
+    """Translate OpenAI Responses API → Chat Completions API."""
     body = request.json
     if not body:
         return jsonify({"error": {"message": "empty request", "type": "invalid_request"}}), 400
+    # Responses API uses "input" field, not "messages"
+    raw_input = body.get("input", body.get("messages", []))
+    # Convert input to messages format
+    if isinstance(raw_input, str):
+        messages = [{"role": "user", "content": raw_input}]
+    elif isinstance(raw_input, list):
+        messages = []
+        for item in raw_input:
+            if isinstance(item, dict):
+                role = item.get("role", "user")
+                # Map "developer" role to "system" (DeepSeek/etc don't support "developer")
+                if role == "developer":
+                    role = "system"
+                content = item.get("content", "")
+                if isinstance(content, list):
+                    text_parts = [c.get("text", "") for c in content if c.get("type") in ("text", "input_text")]
+                    content = "\n".join(text_parts)
+                messages.append({"role": role, "content": content})
+    else:
+        messages = [{"role": "user", "content": str(raw_input)}]
 
+    chat_body = {
+        "model": body.get("model", "gpt-4o-mini"),
+        "messages": messages,
+        "stream": body.get("stream", False),
+        "max_tokens": body.get("max_output_tokens", body.get("max_tokens", 4096)),
+    }
+    # Route through shared engine
     _, providers, gw = load_gateway_config()
     no_demo = gw.get("no_demo", False) or request.args.get("no_demo", "").lower() == "true"
+    engine = FailoverEngine(providers, no_demo=no_demo)
+    result, info = engine.route(chat_body)
 
+    if result is None:
+        pname, reason, code = info if info else ("none", "unknown", 0)
+        return jsonify({"error": {"message": f"All providers unavailable. Last: [{pname}] → {reason}"}}), 503
+
+    provider_id = info if isinstance(info, str) else info[0]
+    stream = body.get("stream", False)
+    response_id = f"resp_{uuid.uuid4().hex}"
+
+    if stream:
+        # Stream: return Responses API SSE format
+        content = ""
+        if provider_id not in ("local-llama", "builtin-demo"):
+            # Read first chunk to get content
+            try:
+                for chunk in result.iter_lines(decode_unicode=True):
+                    if chunk is None:
+                        break
+                    if chunk.startswith("data: ") and "[DONE]" not in chunk:
+                        data = json.loads(chunk[6:])
+                        delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        if delta:
+                            content += delta
+            except:
+                pass
+        
+        import time as _t
+        now = int(_t.time())
+        def gen():
+            yield f"event: response.created\ndata: {json.dumps({'type': 'response.created', 'response_id': response_id})}\n\n"
+            yield f"event: response.output_item.added\ndata: {json.dumps({'type': 'response.output_item.added', 'response_id': response_id, 'output_index': 0, 'item': {'type': 'message', 'id': f'msg_{uuid.uuid4().hex[:16]}', 'role': 'assistant', 'content': []}})}\n\n"
+            yield f"event: response.content_part.added\ndata: {json.dumps({'type': 'response.content_part.added', 'response_id': response_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'text', 'text': ''}})}\n\n"
+            if content:
+                yield f"event: response.output_text.delta\ndata: {json.dumps({'type': 'response.output_text.delta', 'response_id': response_id, 'output_index': 0, 'content_index': 0, 'delta': content})}\n\n"
+            yield f"event: response.output_text.done\ndata: {json.dumps({'type': 'response.output_text.done', 'response_id': response_id, 'output_index': 0, 'content_index': 0, 'text': content})}\n\n"
+            yield f"event: response.output_item.done\ndata: {json.dumps({'type': 'response.output_item.done', 'response_id': response_id, 'output_index': 0, 'item': {'type': 'message', 'id': f'msg_{uuid.uuid4().hex[:16]}', 'role': 'assistant', 'content': [{'type': 'text', 'text': content}]}})}\n\n"
+            yield f"event: response.completed\ndata: {json.dumps({'type': 'response.completed', 'response_id': response_id, 'status': 'completed'})}\n\n"
+        return Response(gen(), mimetype="text/event-stream")
+
+    # Non-streaming: extract content and return Responses API format
+    content = ""
+    if provider_id in ("local-llama", "builtin-demo"):
+        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+    else:
+        resp_json = result.json()
+        content = resp_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+    responses_reply = {
+        "id": response_id,
+        "object": "response",
+        "status": "completed",
+        "model": chat_body["model"],
+        "output": [{
+            "type": "message",
+            "id": f"msg_{uuid.uuid4().hex[:16]}",
+            "role": "assistant",
+            "content": [{
+                "type": "output_text",
+                "text": content,
+                "annotations": []
+            }]
+        }],
+        "usage": {
+            "input_tokens": sum(len(m.get("content", "")) for m in messages) // 2,
+            "output_tokens": len(content) // 2,
+        }
+    }
+    return jsonify(responses_reply)
+
+
+def _route_and_respond(body):
+    """Shared routing + response formatting for all endpoints."""
+    _, providers, gw = load_gateway_config()
+    no_demo = gw.get("no_demo", False) or request.args.get("no_demo", "").lower() == "true"
     engine = FailoverEngine(providers, no_demo=no_demo)
     result, info = engine.route(body)
 
@@ -430,10 +599,9 @@ def handle_chat():
     provider_id = info if isinstance(info, str) else info[0]
     stream = body.get("stream", False)
 
-    # ── Built-in responses (local model or static demo) ──────
+    # Built-in responses (local model or static demo)
     if provider_id in ("local-llama", "builtin-demo"):
         if stream:
-            # Simulate streaming for built-in responses
             content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
             if not content:
                 content = result.get("choices", [{}])[0].get("delta", {}).get("content", "")
@@ -449,13 +617,14 @@ def handle_chat():
                             headers={"X-Provider-Id": provider_id})
         return jsonify(result), 200, {"X-Provider-Id": provider_id}
 
-    # ── External provider response ────────────────────────────
+    # External provider response
     if stream:
         def generate():
             try:
                 for chunk in result.iter_lines(decode_unicode=True):
-                    if chunk:
-                        yield chunk + "\n"
+                    if chunk is None:
+                        break
+                    yield chunk + "\n"
             except Exception as e:
                 log.warning(f"  ⚠️ Stream error: {e}")
                 yield f"data: {json.dumps({'error': 'stream interrupted'})}\n\n"
@@ -463,6 +632,14 @@ def handle_chat():
                         headers={"X-Provider-Id": provider_id})
 
     return jsonify(result.json()), 200, {"X-Provider-Id": provider_id}
+
+
+@app.route("/v1/chat/completions", methods=["POST"])
+def handle_chat():
+    body = request.json
+    if not body:
+        return jsonify({"error": {"message": "empty request", "type": "invalid_request"}}), 400
+    return _route_and_respond(body)
 
 
 @app.route("/v1/models", methods=["GET"])
@@ -851,7 +1028,7 @@ def main():
     print(f"  📡 GET  /health                  ← 健康检查")
     print(f"\n  Ctrl+C to stop\n")
 
-    app.run(host="0.0.0.0", port=args.port, debug=False)
+    app.run(host="0.0.0.0", port=args.port, debug=False, threaded=True)
 
 
 if __name__ == "__main__":

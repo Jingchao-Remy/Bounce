@@ -2,4 +2,19 @@ config.json
 __pycache__/
 *.pyc
 *.gguf
-.env
+.env# Dev working copies (synced to scripts/)
+bounce.py
+bounce-gateway.py
+bounce-panel.py
+bounce-gateway-start.sh
+config.json
+templates.json
+
+# Root copies (use docs/ and scripts/ instead)
+BOUNCE_DEV_DOC.md
+pi-tool-comparison.md
+bounce-gateway-start.sh
+
+# Local config with API keys
+config.json
+templates.json
