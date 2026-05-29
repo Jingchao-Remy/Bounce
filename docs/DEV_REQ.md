@@ -138,3 +138,144 @@ bounce backup restore config.20260530_120000.json  # 恢复
 - 不改 Python 依赖（只用 flask + requests + json 标准库）
 - 不改 gateway 的 `/v1/chat/completions` 核心路由
 - 所有新功能加在 CLI 侧，gateway 只改 config 加载部分
+
+---
+
+## Phase 2：多工具适配
+
+**问题**：当前 Bounce 只服务 Continue 一个工具（且只是只读检测）。Claude Code、Codex CLI、TRAE、Pi 没有统一接入。
+
+**目标**：一个 `bounce use` 命令自动配置所有已安装的 AI 工具指向 `localhost:3001/v1`。
+
+### 工具适配评估
+
+| 工具 | 协议 | 适配方式 | 工作量 |
+|---|---|---|---|
+| **Codex CLI** | OpenAI Chat | env 变量注入 | 小 |
+| **VS Code Continue** | OpenAI Chat | 自动写 `~/.continue/config.json` | 小 |
+| **TRAE** | OpenAI Chat（推测） | 检测+写入 `~/.trae/` | 中（需先确认路径） |
+| **Claude Code** | Anthropic Messages | 新增 `/v1/messages` 翻译端点 | 中 |
+| **Pi** | OpenAI Chat | 天然兼容，零改动 | 0 |
+
+### 任务 5：Codex CLI 支持
+
+**当前**：`bounce doctor` 不检测 Codex，`bounce use` 不输出 Codex env。
+
+**目标**：`bounce use` 输出完整的 Codex 环境变量命令。
+
+**要求**：
+1. config.json 的 `tools` 节加 `codex` 条目：
+   ```json
+   "codex": {
+     "type": "env_var",
+     "env_map": {
+       "CODEX_API_BASE": "api_base",
+       "CODEX_API_KEY": "api_key",
+       "CODEX_MODEL": "models.default"
+     }
+   }
+   ```
+2. `bounce doctor` 检测 Codex CLI 是否安装（`which codex`）
+3. `bounce use <id>` 输出 Windows 和 WSL 的 Codex env 命令
+4. `bounce env` 显示 Codex 相关变量
+
+**验收**：
+```bash
+bounce use deepseek-v4-flash
+# 输出应包含:
+#   ⚡ Codex CLI:
+#      set CODEX_API_BASE=http://localhost:3001/v1
+#      set CODEX_API_KEY=sk-xxx
+```
+
+### 任务 6：VS Code Continue 自动写配置
+
+**当前**：`update_continue_config()` 只读不写。
+
+**目标**：`bounce use` 时自动更新 Continue 配置指向 Bounce Gateway。
+
+**要求**：
+1. `bounce use <id>` 时自动写 `C:\Users\jingc\.continue\config.json`：
+   - 修改 models 列表，加入 Bounce Gateway 条目
+   - apiBase: `http://localhost:3001/v1`
+   - model: 由当前 provider 的 `model_map` 决定
+2. 保留用户已有的非 Bounce 模型
+3. 如果 Continue 配置不存在 → 报错提示路径
+
+**验收**：
+```bash
+bounce use deepseek-cp
+# Continue 配置自动更新，打开 VS Code → Continue → 自动走 Bounce
+```
+
+### 任务 7：TRAE 适配
+
+**当前**：不支持。
+
+**目标**：`bounce doctor` 检测 TRAE 配置，`bounce use` 自动配置。
+
+**要求**：
+1. 先 `bounce doctor` 扫描可能的 TRAE 配置路径：
+   - `C:\Users\jingc\.trae\` 下找 config.json
+   - `~/.trae/`（WSL 侧）
+   - 其他常见位置
+2. 确认路径后，写入方式参考 Continue（OpenAI Chat 格式）
+3. 路径不确定时提示用户手动指定
+
+**验收**：
+```bash
+bounce doctor
+# 输出: ✅ TRAE: C:\Users\jingc\.trae\config.json (已检测)
+# 或    ❌ TRAE: 未找到，请提供配置路径
+```
+
+### 任务 8：Claude Code Anthropic 端点翻译
+
+**当前**：Claude Code 绕过 Bounce，直接连 DeepSeek Anthropic 端点。
+
+**目标**：Bounce Gateway 加 `/v1/messages` 端点，翻译 Anthropic ↔ OpenAI 格式。
+
+**要求**：
+1. **新增端点 `POST /v1/messages`**：
+   - 接收 Anthropic Messages API 格式
+   - 翻译成 OpenAI Chat Completions 格式
+   - 走现有的 FailoverEngine（享受 failover 链）
+   - 把响应翻译回 Anthropic 格式
+2. **关键翻译映射**：
+
+   | Anthropic | OpenAI |
+   |---|---|
+   | `model` | `model`（保持原样） |
+   | `messages` | `messages`（基本一致） |
+   | `max_tokens` | `max_tokens` |
+   | `system`（顶层字段） | `messages[0]` role=system |
+   | `stream: true` | `stream: true` |
+   | `anthropic_version` | 忽略 |
+   | 响应 `content[0].text` | 响应 `choices[0].message.content` |
+3. **model_map 自动路由**：Claude Code 请求 `claude-sonnet-4-20250514` → model_map 转 `deepseek-v4-flash`
+4. **响应格式**：返回 Anthropic Messages API 格式，包含 `content`、`stop_reason`、`usage` 等字段
+5. **Stream 支持**：SSE 流式返回 Anthropic 格式的事件
+6. **修改 `bounce use`**：输出 Claude Code 的 env 命令指向 `http://localhost:3001`：
+   ```bash
+   set ANTHROPIC_BASE_URL=http://localhost:3001
+   set ANTHROPIC_AUTH_TOKEN=sk-bounce
+   ```
+
+**不做的**：
+- 不实现 Anthropic 的 tool_use / function calling（太复杂，DeepSeek 也不支持）
+- 不处理图片/多模态输入
+- 不处理 `anthropic-beta` header
+
+**验收**：
+```bash
+# 1. Bounce 启动
+bounce gateway start
+
+# 2. Claude Code 配置
+set ANTHROPIC_BASE_URL=http://localhost:3001
+set ANTHROPIC_AUTH_TOKEN=sk-bounce
+claude
+
+# 3. Claude Code 的请求走 Bounce failover 链
+#    Tier1 deepseek-cp → Tier2 deepseek-payg → Tier3 本地模型
+```
